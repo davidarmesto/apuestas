@@ -109,3 +109,26 @@ def test_lineas_de_cuarto_se_ignoran():
             {"name": "Under", "price": 1.9, "point": 3.25}, {"name": "Under", "price": 2.1, "point": 3.0}]}]}],
     })
     assert [c.seleccion.linea for c in ev.cuotas] == [3.0]
+
+
+def test_combinada_respeta_correlacion():
+    from apuestas.combinadas import parsear_pierna, probabilidad_combinada
+
+    preds = {"goles": Prediccion(1.8, 1.4), "corners": Prediccion(5, 4, 1.3)}
+    btts, mas25 = parsear_pierna("goles btts si"), parsear_pierna("goles total mas 2.5")
+    p_btts = probabilidad(preds["goles"], btts)[0]
+    p_mas = probabilidad(preds["goles"], mas25)[0]
+    juntas = probabilidad_combinada(preds, [btts, mas25])
+    assert p_btts * p_mas < juntas <= min(p_btts, p_mas)  # correlación positiva
+    corners = parsear_pierna("corners total mas 8.5")
+    p_c = probabilidad(preds["corners"], corners)[0]
+    assert probabilidad_combinada(preds, [btts, mas25, corners]) == pytest.approx(juntas * p_c)
+
+
+def test_anclar_reproduce_mercado():
+    from apuestas.ancla import anclar
+
+    objetivo = {Seleccion("goles", "total", "mas", 2.5): (0.80, 10), Seleccion("goles", "1x2", "1"): (0.40, 10)}
+    nuevas, _ = anclar({"goles": Prediccion(1.2, 1.2)}, objetivo)
+    for s, (p, _) in objetivo.items():
+        assert probabilidad(nuevas["goles"], s)[0] == pytest.approx(p, abs=0.01)

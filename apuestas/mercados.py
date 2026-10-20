@@ -73,41 +73,32 @@ def matriz_conjunta(pred: Prediccion) -> np.ndarray:
     return np.outer(_pmf(pred.local, pred.dispersion, maximo), _pmf(pred.visitante, pred.dispersion, maximo))
 
 
-def _mas_menos(dist: np.ndarray, linea: float, lado: str) -> tuple[float, float]:
-    """Devuelve (P(ganar), P(nulo)) para un más/menos sobre una distribución 1D."""
-    k = np.arange(len(dist))
-    nulo = float(dist[k == linea].sum())
-    if lado == "mas":
-        return float(dist[k > linea].sum()), nulo
-    return float(dist[k < linea].sum()), nulo
+def mascaras(sel: Seleccion, forma: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    """Casillas (goles local, goles visitante) en que la selección gana y en que es nula."""
+    i, j = np.indices(forma)
+    nada = np.zeros(forma, dtype=bool)
+    if sel.tipo == "1x2":
+        return {"1": i > j, "X": i == j, "2": i < j}[sel.lado], nada
+    if sel.tipo == "doble":
+        return {"1X": i >= j, "12": i != j, "X2": i <= j}[sel.lado], nada
+    if sel.tipo == "btts":
+        ambos = (i > 0) & (j > 0)
+        return (ambos if sel.lado == "si" else ~ambos), nada
+    if sel.tipo in ("total", "local", "visitante"):
+        valor = {"total": i + j, "local": i, "visitante": j}[sel.tipo]
+        gana = valor > sel.linea if sel.lado == "mas" else valor < sel.linea
+        return gana, valor == sel.linea
+    if sel.tipo == "handicap":
+        margen = ((i - j) if sel.lado == "local" else (j - i)) + sel.linea
+        return margen > 0, margen == 0
+    raise ValueError(f"Tipo de selección desconocido: {sel.tipo}")
 
 
 def probabilidad(pred: Prediccion, sel: Seleccion, matriz: np.ndarray | None = None) -> tuple[float, float]:
     """Probabilidad de ganar y de nulo (devolución) de una selección."""
     m = matriz if matriz is not None else matriz_conjunta(pred)
-    n = m.shape[0]
-    i, j = np.indices(m.shape)
-    if sel.tipo == "1x2":
-        mascara = {"1": i > j, "X": i == j, "2": i < j}[sel.lado]
-        return float(m[mascara].sum()), 0.0
-    if sel.tipo == "doble":
-        mascara = {"1X": i >= j, "12": i != j, "X2": i <= j}[sel.lado]
-        return float(m[mascara].sum()), 0.0
-    if sel.tipo == "btts":
-        p = float(m[1:, 1:].sum())
-        return (p if sel.lado == "si" else 1 - p), 0.0
-    if sel.tipo == "total":
-        total = np.bincount((i + j).ravel(), m.ravel(), minlength=2 * n)
-        return _mas_menos(total, sel.linea, sel.lado)
-    if sel.tipo == "local":
-        return _mas_menos(m.sum(axis=1), sel.linea, sel.lado)
-    if sel.tipo == "visitante":
-        return _mas_menos(m.sum(axis=0), sel.linea, sel.lado)
-    if sel.tipo == "handicap":
-        dif = (i - j) if sel.lado == "local" else (j - i)
-        margen = dif + sel.linea
-        return float(m[margen > 0].sum()), float(m[margen == 0].sum())
-    raise ValueError(f"Tipo de selección desconocido: {sel.tipo}")
+    gana, nulo = mascaras(sel, m.shape)
+    return float(m[gana].sum()), float(m[nulo].sum())
 
 
 def calibrar_goles(pred: Prediccion, c1: float, cx: float, c2: float) -> Prediccion:

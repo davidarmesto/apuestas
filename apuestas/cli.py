@@ -45,6 +45,77 @@ def _predicciones(a, modelo: ModeloPartido, local: str, visitante: str):
     return preds
 
 
+def _anclar_al_mercado(a, modelo: ModeloPartido, local: str, visitante: str, preds):
+    """Descarga las cuotas del partido (todas las casas y mercados) y ajusta el modelo a ellas."""
+    from .ancla import anclar, probabilidades_justas
+
+    sport = a.competicion or datos.LIGAS[a.liga[0]][1]
+    for ev in odds_api.eventos(sport, a.regiones):
+        if (emparejar(ev.local, modelo.equipos), emparejar(ev.visitante, modelo.equipos)) == (local, visitante):
+            odds_api.cuotas_extra(sport, ev, a.regiones)
+            justas = probabilidades_justas(ev)
+            nuevas, resumen = anclar(preds, justas)
+            print(f"Modelo anclado a {len({c.casa for c in ev.cuotas})} casas:")
+            for linea in resumen:
+                print("  " + linea)
+            return nuevas, ev
+    print(f"Aviso: no encuentro {local} - {visitante} en {sport}; uso el modelo sin anclar")
+    return preds, None
+
+
+def _preparar(a):
+    modelo, _ = _modelo(a.liga, a.temporadas, a.vida_media)
+    local, visitante = modelo.resolver_equipo(a.local), modelo.resolver_equipo(a.visitante)
+    preds = modelo.predecir(local, visitante)
+    ev = None
+    if a.anclar:
+        preds, ev = _anclar_al_mercado(a, modelo, local, visitante, preds)
+    return local, visitante, preds, ev
+
+
+def cmd_combinada(a):
+    from .combinadas import parsear_pierna, probabilidad_combinada
+
+    local, visitante, preds, _ = _preparar(a)
+    piernas = [parsear_pierna(t) for t in a.pierna]
+    p = probabilidad_combinada(preds, piernas)
+    print(f"\n{local} vs {visitante} — combinada de {len(piernas)} selecciones:")
+    for s in piernas:
+        print(f"  • {s.describir(local, visitante)}")
+    print(f"\n  Probabilidad: {p:.1%}  (sale ~{p * 10:.1f} de cada 10 veces)")
+    print(f"  Cuota justa:  {1 / p:.2f}")
+    if a.cuota:
+        ev = valor_esperado(p, a.cuota)
+        print(f"  Cuota de la casa {a.cuota:.2f}: valor esperado {ev:+.1%} "
+              + ("✅ por encima de lo justo" if ev > 0 else "❌ la casa paga menos de lo justo"))
+        if a.importe:
+            print(f"  {a.importe:.0f} € -> cobras {a.importe * a.cuota:.2f} € si acierta; "
+                  f"a largo plazo ganarías/perderías {a.importe * ev:+.2f} € de media por apuesta")
+    if len({s.estadistica for s in piernas}) > 1:
+        print("  Nota: entre goles, córners y tarjetas se supone independencia.")
+
+
+def cmd_sugerir(a):
+    from .combinadas import sugerir
+
+    local, visitante, preds, ev = _preparar(a)
+    solo = a.solo
+    if not solo and ev is not None:
+        # Solo estadísticas que el mercado ha podido corregir; el resto del modelo no es fiable aquí
+        from .ancla import probabilidades_justas
+
+        solo = sorted({s.estadistica for s in probabilidades_justas(ev)})
+    resultados = sugerir(preds, a.objetivo, a.max_piernas, solo, a.prob_pierna)
+    if a.min_piernas:
+        resultados = [r for r in resultados if len(r[0]) >= a.min_piernas]
+    print(f"\nCombinadas con cuota justa ≈ {a.objetivo} ({len(resultados)} encontradas). Las {a.top} más probables:\n")
+    for combo, p in resultados[: a.top]:
+        print(f"  {p:5.1%}  cuota justa {1 / p:4.2f}  ·  " + "  +  ".join(s.describir(local, visitante) for s in combo))
+    if not resultados:
+        print("  (ninguna; prueba con otra cuota objetivo o baja --prob-pierna)")
+    print("\nCompara cada cuota justa con la que te da la casa: solo hay valor si la casa paga MÁS.")
+
+
 def cmd_equipos(a):
     modelo, df = _modelo(a.liga, 1, a.vida_media)
     print("\n".join(sorted(set(df["HomeTeam"]) | set(df["AwayTeam"]))))
@@ -216,6 +287,28 @@ def main(argv=None):
                    help="descarta selecciones donde el modelo se aleja más que esto del consenso de casas")
     s.add_argument("--partido", help="solo los partidos de este equipo (ahorra créditos con --extra)")
     s.set_defaults(f=cmd_valor)
+
+    anclaje = argparse.ArgumentParser(add_help=False)
+    anclaje.add_argument("local")
+    anclaje.add_argument("visitante")
+    anclaje.add_argument("--anclar", action="store_true", help="ajusta el modelo a las cuotas actuales (The Odds API)")
+    anclaje.add_argument("--competicion", choices=list(datos.COMPETICIONES.values()))
+    anclaje.add_argument("--regiones", default="eu", help="regiones de casas: eu, uk, us, au (separadas por comas)")
+
+    s = sub.add_parser("combinada", parents=[comun, anclaje], help="probabilidad de una combinada del mismo partido")
+    s.add_argument("--pierna", action="append", required=True, help="una selección; repítelo por cada una")
+    s.add_argument("--cuota", type=float, help="cuota que te ofrece la casa por la combinada")
+    s.add_argument("--importe", type=float, help="euros a apostar")
+    s.set_defaults(f=cmd_combinada)
+
+    s = sub.add_parser("sugerir", parents=[comun, anclaje], help="busca combinadas con una cuota objetivo")
+    s.add_argument("--objetivo", type=float, default=3.0, help="cuota buscada")
+    s.add_argument("--max-piernas", type=int, default=4)
+    s.add_argument("--min-piernas", type=int, default=2)
+    s.add_argument("--prob-pierna", type=float, default=0.55, help="probabilidad mínima de cada selección")
+    s.add_argument("--solo", nargs="+", help="estadísticas permitidas, p. ej. goles corners")
+    s.add_argument("--top", type=int, default=15)
+    s.set_defaults(f=cmd_sugerir)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")
