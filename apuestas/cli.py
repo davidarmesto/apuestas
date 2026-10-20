@@ -228,9 +228,11 @@ def cmd_valor(a):
 def _registrar(tabla: pd.DataFrame, liga: str) -> None:
     """Guarda las recomendaciones para poder medir después si el modelo acierta en mercados sin histórico de cuotas."""
     ruta = datos.DIR_DATOS / "registro.csv"
-    tabla.assign(liga=liga, registrado=pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")).to_csv(
-        ruta, mode="a", header=not ruta.exists(), index=False
-    )
+    nuevas = tabla.assign(liga=liga, registrado=pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"))
+    # Se reescribe entero para que el CSV siga siendo válido aunque cambien las columnas
+    if ruta.exists():
+        nuevas = pd.concat([pd.read_csv(ruta), nuevas], ignore_index=True)
+    nuevas.to_csv(ruta, index=False)
 
 
 def cmd_backtest(a):
