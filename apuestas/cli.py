@@ -102,17 +102,22 @@ def cmd_valor(a):
     if a.dias:
         limite = pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=a.dias)
         eventos = [e for e in eventos if pd.Timestamp(e.inicio) <= limite]
+    if a.partido:
+        equipo = modelo.resolver_equipo(a.partido)
+        eventos = [e for e in eventos if equipo in (emparejar(e.local, modelo.equipos), emparejar(e.visitante, modelo.equipos))]
     print(f"{len(eventos)} partidos con cuotas en {sport}")
     recomendaciones = []
     for ev in eventos:
         local, visitante = emparejar(ev.local, modelo.equipos), emparejar(ev.visitante, modelo.equipos)
         if not local or not visitante:
-            print(f"  Aviso: no reconozco {ev.local} / {ev.visitante}; añádelo a ALIAS en nombres.py")
+            desconocidos = [n for n, e in ((ev.local, local), (ev.visitante, visitante)) if not e]
+            print(f"  Sin datos de {', '.join(desconocidos)} ({ev.local} - {ev.visitante}): se omite")
             continue
         if a.extra:
             odds_api.cuotas_extra(sport, ev, a.regiones)
         preds = modelo.predecir(local, visitante)
         matrices = {e: matriz_conjunta(p) for e, p in preds.items()}
+        consenso = ev.consenso()
         for c in ev.mejores_cuotas():
             est = c.seleccion.estadistica
             if est not in preds:
@@ -126,17 +131,27 @@ def cmd_valor(a):
                     "cuota": c.precio, "casa": c.casa, "prob": p,
                     "valor": valor_esperado(p, c.precio, nulo),
                     "stake": stake(p, c.precio, nulo, cfg),
+                    # Si el modelo discrepa mucho de todas las casas, lo normal es que se equivoque el modelo
+                    "discrepa": abs(p - consenso[c.seleccion]) > a.discrepancia,
                 })
     if not recomendaciones:
         print("\nNo hay apuestas con valor según el modelo.")
         return
-    tabla = pd.DataFrame(recomendaciones).sort_values("valor", ascending=False).head(a.top)
+    todas = pd.DataFrame(recomendaciones).sort_values("valor", ascending=False)
+    descartadas, tabla = todas[todas.discrepa], todas[~todas.discrepa].head(a.top)
     _registrar(tabla, "+".join(a.liga))
     print(f"\nApuestas con valor según el modelo (EV ≥ {cfg.ventaja_minima:.0%}):")
     print("  Ojo: en backtests el modelo NO bate al mercado en 1X2 ni en goles; trátalo como orientación.\n")
     for _, r in tabla.iterrows():
         print(f"  {r.inicio}  {r.partido}")
         print(f"      {r.apuesta:<42} @ {r.cuota:<5.2f} ({r.casa})  prob {r.prob:5.1%}  EV {r.valor:+5.1%}  stake {r.stake:.1%}")
+    if tabla.empty:
+        print("  (ninguna)")
+    if not descartadas.empty:
+        print(f"\nDescartadas: {len(descartadas)} en las que el modelo se aleja más de {a.discrepancia:.0%} "
+              "de la media de las casas (probablemente es el modelo el que falla):")
+        for _, r in descartadas.head(10).iterrows():
+            print(f"  {r.partido}: {r.apuesta} @ {r.cuota:.2f}  (modelo {r.prob:.0%}, casas {1 / r.cuota:.0%})")
 
 
 def _registrar(tabla: pd.DataFrame, liga: str) -> None:
@@ -197,6 +212,9 @@ def main(argv=None):
     s.add_argument("--regiones", default="eu", help="regiones de casas: eu, uk, us, au")
     s.add_argument("--dias", type=float, default=7, help="solo partidos en los próximos N días")
     s.add_argument("--top", type=int, default=30)
+    s.add_argument("--discrepancia", type=float, default=0.10,
+                   help="descarta selecciones donde el modelo se aleja más que esto del consenso de casas")
+    s.add_argument("--partido", help="solo los partidos de este equipo (ahorra créditos con --extra)")
     s.set_defaults(f=cmd_valor)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")

@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import requests
 
 from .datos import DIR_DATOS
@@ -40,6 +41,13 @@ class Evento:
     local: str
     visitante: str
     cuotas: list[Cuota] = field(default_factory=list)
+
+    def consenso(self) -> dict[Seleccion, float]:
+        """Probabilidad implícita mediana entre todas las casas para cada selección (con margen)."""
+        por_sel: dict[Seleccion, list[float]] = {}
+        for c in self.cuotas:
+            por_sel.setdefault(c.seleccion, []).append(1 / c.precio)
+        return {s: float(np.median(v)) for s, v in por_sel.items()}
 
     def mejores_cuotas(self) -> list[Cuota]:
         """La mejor cuota disponible para cada selección."""
@@ -117,6 +125,11 @@ def parsear_evento(e: dict) -> Evento:
     return ev
 
 
+def _linea_simple(punto) -> bool:
+    """Líneas enteras o de medio gol; las asiáticas de cuarto (2.25, 2.75) no se modelan."""
+    return punto is not None and float(punto) * 2 == int(float(punto) * 2)
+
+
 def _lado_total(nombre: str) -> str | None:
     return {"over": "mas", "under": "menos"}.get(nombre.lower())
 
@@ -140,15 +153,14 @@ def _a_seleccion(mercado: str, o: dict, local: str, visitante: str) -> Seleccion
         "alternate_totals_corners": "corners",
         "alternate_totals_cards": "tarjetas",
     }.get(mercado)
-    if estadistica and punto is not None and _lado_total(nombre):
+    if estadistica and _linea_simple(punto) and _lado_total(nombre):
         return Seleccion(estadistica, "total", _lado_total(nombre), float(punto))
-    if mercado == "team_totals" and punto is not None and _lado_total(nombre):
+    if mercado == "team_totals" and _linea_simple(punto) and _lado_total(nombre):
         equipo = o.get("description", "")
         tipo = "local" if equipo == local else "visitante" if equipo == visitante else None
         return Seleccion("goles", tipo, _lado_total(nombre), float(punto)) if tipo else None
-    if mercado == "alternate_spreads_corners" and punto is not None:
+    if mercado == "alternate_spreads_corners" and _linea_simple(punto):
         lado = "local" if nombre == local else "visitante" if nombre == visitante else None
-        # Solo líneas enteras o .5 (las asiáticas de cuarto no se modelan)
-        if lado and float(punto) * 2 == int(float(punto) * 2):
+        if lado:
             return Seleccion("corners", "handicap", lado, float(punto))
     return None

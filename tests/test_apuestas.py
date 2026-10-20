@@ -100,3 +100,12 @@ def test_calibrar_goles_reproduce_mercado():
     p1 = probabilidad(cal, Seleccion("goles", "1x2", "1"), m)[0]
     assert p1 == pytest.approx(sin_margen([2.10, 3.80, 3.40])[0], abs=0.005)
     assert cal.local > cal.visitante
+
+
+def test_lineas_de_cuarto_se_ignoran():
+    ev = parsear_evento({
+        "id": "x", "home_team": "A", "away_team": "B",
+        "bookmakers": [{"title": "P", "markets": [{"key": "totals", "outcomes": [
+            {"name": "Under", "price": 1.9, "point": 3.25}, {"name": "Under", "price": 2.1, "point": 3.0}]}]}],
+    })
+    assert [c.seleccion.linea for c in ev.cuotas] == [3.0]
