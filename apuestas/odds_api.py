@@ -25,6 +25,9 @@ DIR_CACHE = DIR_DATOS / "cache_odds"
 MERCADOS_PRINCIPALES = "h2h,totals"
 # Mercados adicionales de fútbol; se piden partido a partido (endpoint de evento).
 MERCADOS_EXTRA = "btts,double_chance,alternate_totals,team_totals,alternate_totals_corners,alternate_spreads_corners,alternate_totals_cards"
+# Estadísticas de jugadores (sobre todo casas de EE. UU.: hay que pedir la región "us")
+MERCADOS_JUGADOR = "player_shots_on_target,player_shots,player_goal_scorer_anytime"
+_ESTADISTICA_JUGADOR = {"player_shots_on_target": "remates_puerta", "player_shots": "remates", "player_goal_scorer_anytime": "goles"}
 
 
 @dataclass
@@ -136,6 +139,14 @@ def _lado_total(nombre: str) -> str | None:
 
 def _a_seleccion(mercado: str, o: dict, local: str, visitante: str) -> Seleccion | None:
     nombre, punto = o.get("name", ""), o.get("point")
+    if mercado in _ESTADISTICA_JUGADOR and o.get("description"):
+        if mercado == "player_goal_scorer_anytime":
+            lado, punto = ("mas" if nombre.lower() == "yes" else None), 0.5
+        else:
+            lado = _lado_total(nombre)
+        if lado and punto is not None:
+            return Seleccion(_ESTADISTICA_JUGADOR[mercado], "jugador", lado, float(punto), jugador=o["description"])
+        return None
     if mercado in ("h2h", "h2h_3_way"):
         lado = "1" if nombre == local else "2" if nombre == visitante else "X" if nombre.lower() == "draw" else None
         return Seleccion("goles", "1x2", lado) if lado else None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy import stats
@@ -35,6 +35,8 @@ class Seleccion:
     tipo: str
     lado: str
     linea: float | None = None
+    jugador: str | None = None  # para tipo 'jugador'; `estadistica` es la del jugador y `lado` mas/menos
+    equipo: str | None = None  # 'local' o 'visitante', equipo del jugador
 
     def describir(self, local: str = "Local", visitante: str = "Visitante") -> str:
         est = NOMBRES.get(self.estadistica, self.estadistica)
@@ -45,6 +47,8 @@ class Seleccion:
         if self.tipo == "btts":
             return "Ambos marcan: " + ("Sí" if self.lado == "si" else "No")
         palabra = "Más de" if self.lado == "mas" else "Menos de"
+        if self.tipo == "jugador":
+            return f"{self.jugador}: {NOMBRES.get(self.estadistica, self.estadistica)} {palabra.lower()} {self.linea:g}"
         if self.tipo == "total":
             return f"{est}: {palabra} {self.linea:g}"
         if self.tipo in ("local", "visitante"):
@@ -66,11 +70,29 @@ def _pmf(media: float, dispersion: float, maximo: int) -> np.ndarray:
     return p / p.sum()
 
 
+def _frank(u: np.ndarray, v: np.ndarray, theta: float) -> np.ndarray:
+    """Cópula de Frank: C(u, v). Admite dependencia positiva y negativa con fórmula cerrada."""
+    if abs(theta) < 1e-6:
+        return u * v
+    num = np.expm1(-theta * u) * np.expm1(-theta * v)
+    return -np.log1p(num / np.expm1(-theta)) / theta
+
+
 def matriz_conjunta(pred: Prediccion) -> np.ndarray:
-    """P[i, j] = P(local = i, visitante = j), suponiendo independencia."""
+    """P[i, j] = P(local = i, visitante = j), con la correlación local-visitante del modelo."""
     sd = math.sqrt(max(pred.local, pred.visitante) * pred.dispersion)
     maximo = int(max(pred.local, pred.visitante) + 10 * sd + 10)
-    return np.outer(_pmf(pred.local, pred.dispersion, maximo), _pmf(pred.visitante, pred.dispersion, maximo))
+    pl, pv = _pmf(pred.local, pred.dispersion, maximo), _pmf(pred.visitante, pred.dispersion, maximo)
+    if abs(pred.correlacion) < 0.02:
+        return np.outer(pl, pv)
+    # Para la cópula de Frank, rho de Spearman ≈ theta / 6 cuando la dependencia es moderada
+    theta = 6 * pred.correlacion
+    fl = np.concatenate([[0.0], np.cumsum(pl)]).clip(0, 1)
+    fv = np.concatenate([[0.0], np.cumsum(pv)]).clip(0, 1)
+    c = _frank(fl[:, None], fv[None, :], theta)
+    m = c[1:, 1:] - c[:-1, 1:] - c[1:, :-1] + c[:-1, :-1]
+    m = np.clip(m, 0, None)
+    return m / m.sum()
 
 
 def mascaras(sel: Seleccion, forma: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
@@ -114,7 +136,7 @@ def calibrar_goles(pred: Prediccion, c1: float, cx: float, c2: float) -> Predicc
 
     def ajustada(x) -> Prediccion:
         s, d = x
-        return Prediccion(pred.local * math.exp(s + d), pred.visitante * math.exp(s - d), pred.dispersion)
+        return replace(pred, local=pred.local * math.exp(s + d), visitante=pred.visitante * math.exp(s - d))
 
     def error(x):
         m = matriz_conjunta(ajustada(x))

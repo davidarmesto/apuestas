@@ -39,6 +39,18 @@ cp .env.example .env   # y pon tu ODDS_API_KEY
 # Backtest en una temporada pasada
 .venv/bin/python -m apuestas backtest --temporada 2526
 
+# Partido de Champions: mezclar ligas y anclar el modelo a las cuotas actuales
+.venv/bin/python -m apuestas predecir PSG Barcelona --liga F1 SP1 --mercado-1x2 2.40 4.40 2.375
+
+# Combinadas (crear apuesta / MyMatch): probabilidad real y valor frente a la cuota de la casa
+.venv/bin/python -m apuestas combinada PSG Barcelona --liga SP1 F1 --anclar --jugadores \
+    --competicion soccer_uefa_champs_league --regiones eu,uk,us \
+    --pierna "corners local mas 4.5" --pierna "jugador local remates_puerta mas 1.5 Dembele" --cuota 3.90
+
+# Buscar combinadas con una cuota objetivo
+.venv/bin/python -m apuestas sugerir PSG Barcelona --liga SP1 F1 --anclar \
+    --competicion soccer_uefa_champs_league --regiones eu,uk,us --objetivo 3
+
 # Equipos de la liga (nombres tal como los usa el modelo)
 .venv/bin/python -m apuestas equipos --liga E0
 ```
@@ -48,6 +60,18 @@ Ligas: `SP1` LaLiga, `SP2` Segunda, `E0` Premier, `E1` Championship, `I1` Serie 
 
 Cada ejecución de `valor` guarda sus recomendaciones en `datos/registro.csv` para
 poder comprobar más adelante si el modelo acierta en córners y tarjetas.
+
+## Combinadas
+
+- `--anclar` ajusta goles, córners y tarjetas a las cuotas sin margen de todas las casas
+  (The Odds API); el modelo deja de opinar sobre lo que el mercado ya sabe y se usa para
+  calcular de forma coherente la probabilidad de que pasen varias cosas a la vez.
+- Local y visitante se relacionan con una cópula de Frank (tarjetas +0,2, córners −0,1),
+  medida en los datos y validada fuera de muestra.
+- Entre estadísticas se usa una cópula gaussiana con las correlaciones históricas de los
+  residuos (goles–remates a puerta del mismo equipo +0,5, goles–córners propios −0,1).
+- `--jugadores` añade remates, remates a puerta y goleadores (casas de EE. UU.); la media
+  de cada jugador se ajusta a sus cuotas y se relaciona con la de su equipo.
 
 ## Resultados del backtest (importante)
 

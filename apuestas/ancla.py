@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from dataclasses import replace
 
 import numpy as np
 from scipy.optimize import minimize
@@ -64,7 +65,7 @@ def anclar(preds: dict[str, Prediccion], justas: dict[Seleccion, tuple[float, in
 
         def ajustada(x) -> Prediccion:
             s, d = x[0], (x[1] if direccional else 0.0)
-            return Prediccion(pred.local * math.exp(s + d), pred.visitante * math.exp(s - d), pred.dispersion)
+            return replace(pred, local=pred.local * math.exp(s + d), visitante=pred.visitante * math.exp(s - d))
 
         def error(x):
             m = matriz_conjunta(ajustada(x))
@@ -82,3 +83,33 @@ def anclar(preds: dict[str, Prediccion], justas: dict[Seleccion, tuple[float, in
             f"{len(objetivos)} líneas, error medio {rms:.1%})"
         )
     return nuevas, resumen
+
+
+def lambdas_jugadores(ev: Evento) -> dict[tuple[str, str], float]:
+    """Media de cada estadística de jugador que reproduce las cuotas del mercado.
+
+    Normalmente solo se publica el "más de", así que se ajusta a la vez la media
+    (Poisson) y el margen de la casa (acotado entre 0 % y 15 %).
+    """
+    from scipy import stats
+
+    precios: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+    for c in ev.cuotas:
+        s = c.seleccion
+        if s.tipo == "jugador" and s.lado == "mas":
+            precios[(s.jugador, s.estadistica)].append((s.linea, 1 / c.precio))
+    salida = {}
+    for clave, puntos in precios.items():
+        lineas, implicitas = np.array([p[0] for p in puntos]), np.array([p[1] for p in puntos])
+
+        def error(x):
+            lam, margen = x
+            p = stats.poisson.sf(np.floor(lineas), lam)
+            return float(np.sum((np.minimum(0.995, p * (1 + margen)) - implicitas) ** 2))
+
+        mejor = min(
+            (minimize(error, [l0, 0.06], method="L-BFGS-B", bounds=[(0.01, 15), (0.0, 0.15)]) for l0 in (0.5, 1.5, 3.0)),
+            key=lambda r: r.fun,
+        )
+        salida[clave] = float(mejor.x[0])
+    return salida

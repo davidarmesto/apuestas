@@ -28,6 +28,7 @@ class Prediccion:
     local: float
     visitante: float
     dispersion: float = 1.0
+    correlacion: float = 0.0  # entre el valor del local y el del visitante (p. ej. tarjetas > 0, córners < 0)
 
 
 class ModeloConteo:
@@ -39,6 +40,7 @@ class ModeloConteo:
         self.mu = self.ventaja = 0.0
         self.ataque = self.defensa = np.zeros(0)
         self.dispersion = 1.0
+        self.correlacion = 0.0
         self.n_partidos = 0
         self.nivel_liga = np.zeros(1)
         self.liga_de: dict[str, int] = {}
@@ -104,6 +106,12 @@ class ModeloConteo:
         pesos = np.concatenate([w, w])
         g_libertad = 1 - len(theta) / (2 * len(df))
         self.dispersion = float(max(1.0, np.sum(pesos * pearson) / np.sum(pesos) / max(g_libertad, 0.5)))
+        # Correlación local-visitante de los residuos estandarizados
+        zh, za = (yh - lh) / np.sqrt(lh * self.dispersion), (ya - la) / np.sqrt(la * self.dispersion)
+        cov = np.sum(w * zh * za) / np.sum(w)
+        var = np.sqrt(np.sum(w * zh**2) / np.sum(w) * np.sum(w * za**2) / np.sum(w))
+        self.correlacion = float(np.clip(cov / var, -0.5, 0.5))
+        self.residuos = pd.DataFrame({"l": zh, "v": za}, index=df.index)
         self.n_partidos = len(df)
         return self
 
@@ -113,7 +121,12 @@ class ModeloConteo:
         nivel = (self.nivel_liga[self.liga_de[local]] + self.nivel_liga[self.liga_de[visitante]]) / 2
         lh = np.exp(self.mu + self.ventaja + self.ataque[i] + self.defensa[j] + nivel)
         la = np.exp(self.mu + self.ataque[j] + self.defensa[i] + nivel)
-        return Prediccion(float(lh), float(la), self.dispersion)
+        return Prediccion(float(lh), float(la), self.dispersion, self.correlacion)
+
+
+# Fuerza con que se aplica la correlación local-visitante, elegida comparando con la temporada 25/26
+# fuera de muestra (en córners, la correlación completa empeoraba las líneas de totales).
+FACTOR_CORRELACION = {"corners": 0.5}
 
 
 class ModeloPartido:
@@ -132,6 +145,12 @@ class ModeloPartido:
                 continue
             modelo = ModeloConteo(self.vida_media_dias, self.regularizacion)
             self.modelos[nombre] = modelo.ajustar(df, cl, cv, fecha_ref)
+            modelo.correlacion *= FACTOR_CORRELACION.get(nombre, 1.0)
+        # Correlaciones entre estadísticas (p. ej. goles y remates a puerta del mismo equipo)
+        residuos = pd.concat(
+            {f"{n}_{lado}": m.residuos[lado] for n, m in self.modelos.items() for lado in ("l", "v")}, axis=1
+        )
+        self.correlaciones = residuos.dropna().corr()
         if "goles" not in self.modelos:
             raise ValueError("No se pudo ajustar el modelo de goles")
         return self

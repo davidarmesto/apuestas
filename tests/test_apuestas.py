@@ -132,3 +132,49 @@ def test_anclar_reproduce_mercado():
     nuevas, _ = anclar({"goles": Prediccion(1.2, 1.2)}, objetivo)
     for s, (p, _) in objetivo.items():
         assert probabilidad(nuevas["goles"], s)[0] == pytest.approx(p, abs=0.01)
+
+
+def test_correlacion_interna_mantiene_marginales():
+    indep = matriz_conjunta(Prediccion(2.0, 2.2, 1.2, 0.0))
+    corr = matriz_conjunta(Prediccion(2.0, 2.2, 1.2, 0.25))
+    np.testing.assert_allclose(corr.sum(axis=1), indep.sum(axis=1), atol=1e-6)
+    np.testing.assert_allclose(corr.sum(axis=0), indep.sum(axis=0), atol=1e-6)
+    i, j = np.indices(corr.shape)
+    cov = lambda m: (m * i * j).sum() - (m * i).sum() * (m * j).sum()
+    assert cov(corr) > 0.1 and abs(cov(indep)) < 1e-6
+    # Correlación positiva => más probabilidad en los extremos del total
+    p_alto = lambda m: m[(i + j) > 6.5].sum()
+    assert p_alto(corr) > p_alto(indep)
+
+
+def test_copula_entre_estadisticas():
+    from apuestas.combinadas import parsear_pierna, probabilidad_combinada
+
+    preds = {"goles": Prediccion(1.6, 1.3), "remates_puerta": Prediccion(5.0, 4.0, 1.2)}
+    cols = ["goles_l", "goles_v", "remates_puerta_l", "remates_puerta_v"]
+    corr = pd.DataFrame(np.eye(4), index=cols, columns=cols)
+    corr.loc["goles_l", "remates_puerta_l"] = corr.loc["remates_puerta_l", "goles_l"] = 0.5
+    goles_local = parsear_pierna("goles local mas 1.5")
+    sot_local, sot_visit = parsear_pierna("remates_puerta local mas 4.5"), parsear_pierna("remates_puerta visitante mas 3.5")
+    indep = probabilidad_combinada(preds, [goles_local, sot_local])
+    assert probabilidad_combinada(preds, [goles_local, sot_local], corr) > indep * 1.1
+    # Sin correlación entre goles locales y remates visitantes => igual que independiente
+    a = probabilidad_combinada(preds, [goles_local, sot_visit], corr)
+    assert a == pytest.approx(probabilidad_combinada(preds, [goles_local, sot_visit]), rel=0.02)
+
+
+def test_jugador_desde_cuotas():
+    from apuestas.ancla import lambdas_jugadores
+    from apuestas.combinadas import parsear_pierna, probabilidad_combinada
+    from apuestas.odds_api import Cuota, Evento
+    from scipy import stats as st
+
+    ev = Evento("x", "", "A", "B")
+    for linea in (0.5, 1.5, 2.5):
+        p = st.poisson.sf(np.floor(linea), 1.6) * 1.06
+        ev.cuotas.append(Cuota(Seleccion("remates_puerta", "jugador", "mas", linea, jugador="Ousmane Dembélé"), 1 / p, "X"))
+    lams = lambdas_jugadores(ev)
+    assert lams[("Ousmane Dembélé", "remates_puerta")] == pytest.approx(1.6, abs=0.15)
+    pierna = parsear_pierna("jugador local remates_puerta mas 1.5 dembele")
+    p = probabilidad_combinada({"goles": Prediccion(1.5, 1.2)}, [pierna], None, lams)
+    assert p == pytest.approx(st.poisson.sf(1, 1.6), abs=0.04)
