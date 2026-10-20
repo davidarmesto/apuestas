@@ -38,6 +38,7 @@ ALIAS = {
     "bayer leverkusen": "leverkusen",
     "eintracht frankfurt": "ein frankfurt",
     "paris saint germain": "paris sg",
+    "psg": "paris sg",
     "olympique marseille": "marseille",
     "olympique lyonnais": "lyon",
 }

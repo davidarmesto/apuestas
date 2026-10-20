@@ -110,6 +110,30 @@ def probabilidad(pred: Prediccion, sel: Seleccion, matriz: np.ndarray | None = N
     raise ValueError(f"Tipo de selección desconocido: {sel.tipo}")
 
 
+def calibrar_goles(pred: Prediccion, c1: float, cx: float, c2: float) -> Prediccion:
+    """Ajusta las medias de goles para reproducir las probabilidades 1X2 del mercado (sin margen).
+
+    Se escalan ambas medias por e^(s±d): `d` mueve la superioridad y `s` el total de goles.
+    """
+    from scipy.optimize import minimize
+
+    from .valor import sin_margen
+
+    objetivo_p = np.array(sin_margen([c1, cx, c2]))
+
+    def ajustada(x) -> Prediccion:
+        s, d = x
+        return Prediccion(pred.local * math.exp(s + d), pred.visitante * math.exp(s - d), pred.dispersion)
+
+    def error(x):
+        m = matriz_conjunta(ajustada(x))
+        i, j = np.indices(m.shape)
+        pm = np.array([m[i > j].sum(), m[i == j].sum(), m[i < j].sum()])
+        return float(np.sum((pm - objetivo_p) ** 2))
+
+    return ajustada(minimize(error, [0.0, 0.0], method="Nelder-Mead", options={"xatol": 1e-5, "fatol": 1e-12}).x)
+
+
 def _lineas_cerca(media: float, n: int = 2) -> list[float]:
     centro = math.floor(media) + 0.5
     return [centro + d for d in range(-n, n + 1) if centro + d > 0]

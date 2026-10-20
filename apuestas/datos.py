@@ -25,6 +25,13 @@ LIGAS = {
     "P1": ("Primeira Liga", "soccer_portugal_primeira_liga"),
 }
 
+# Competiciones europeas en The Odds API (se modelan juntando las ligas de los equipos)
+COMPETICIONES = {
+    "UCL": "soccer_uefa_champs_league",
+    "UEL": "soccer_uefa_europa_league",
+    "UECL": "soccer_uefa_europa_conference_league",
+}
+
 # Columnas de estadísticas por equipo: nombre interno -> (columna local, columna visitante)
 ESTADISTICAS = {
     "goles": ("FTHG", "FTAG"),
@@ -82,6 +89,7 @@ def cargar(liga: str, temporadas: list[str]) -> pd.DataFrame:
             continue
         df = pd.read_csv(ruta, encoding="utf-8-sig", on_bad_lines="skip")
         df["Temporada"] = temporada
+        df["Liga"] = liga
         partes.append(df)
     if not partes:
         raise RuntimeError(f"No hay datos para {liga}")

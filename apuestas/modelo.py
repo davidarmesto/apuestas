@@ -40,6 +40,8 @@ class ModeloConteo:
         self.ataque = self.defensa = np.zeros(0)
         self.dispersion = 1.0
         self.n_partidos = 0
+        self.nivel_liga = np.zeros(1)
+        self.liga_de: dict[str, int] = {}
 
     def ajustar(self, df: pd.DataFrame, col_local: str, col_visitante: str, fecha_ref=None) -> "ModeloConteo":
         df = df.dropna(subset=[col_local, col_visitante])
@@ -52,6 +54,14 @@ class ModeloConteo:
 
         h = df["HomeTeam"].map(self.indice).to_numpy()
         a = df["AwayTeam"].map(self.indice).to_numpy()
+        # Cada liga tiene su propio nivel medio (sin penalizar); la primera es la referencia.
+        ligas = df["Liga"] if "Liga" in df.columns else pd.Series("", index=df.index)
+        codigos = sorted(ligas.unique())
+        lg = ligas.map({c: k for k, c in enumerate(codigos)}).to_numpy()
+        n_ligas = len(codigos)
+        self.liga_de = {}
+        for equipo, k in list(zip(df["HomeTeam"], lg)) + list(zip(df["AwayTeam"], lg)):
+            self.liga_de[equipo] = int(k)  # ordenado por fecha: se queda con la liga más reciente
         yh = df[col_local].to_numpy(float)
         ya = df[col_visitante].to_numpy(float)
         dias = (fecha_ref - df["Fecha"]).dt.days.clip(lower=0).to_numpy(float)
@@ -59,9 +69,10 @@ class ModeloConteo:
 
         def objetivo(theta):
             mu, ventaja = theta[0], theta[1]
-            att, de = theta[2 : 2 + n], theta[2 + n :]
-            eta_h = mu + ventaja + att[h] + de[a]
-            eta_a = mu + att[a] + de[h]
+            att, de = theta[2 : 2 + n], theta[2 + n : 2 + 2 * n]
+            nivel = np.concatenate([[0.0], theta[2 + 2 * n :]])[lg]
+            eta_h = mu + ventaja + att[h] + de[a] + nivel
+            eta_a = mu + att[a] + de[h] + nivel
             lh, la = np.exp(eta_h), np.exp(eta_a)
             nll = np.sum(w * (lh - yh * eta_h)) + np.sum(w * (la - ya * eta_a))
             nll += self.reg * (att @ att + de @ de)
@@ -72,31 +83,36 @@ class ModeloConteo:
             g[1] = rh.sum()
             g_att = np.bincount(h, rh, n) + np.bincount(a, ra, n) + 2 * self.reg * att
             g_def = np.bincount(a, rh, n) + np.bincount(h, ra, n) + 2 * self.reg * de
-            g[2 : 2 + n], g[2 + n :] = g_att, g_def
+            g[2 : 2 + n], g[2 + n : 2 + 2 * n] = g_att, g_def
+            g[2 + 2 * n :] = np.bincount(lg, rh + ra, n_ligas)[1:]
             return nll, g
 
         media = max(np.mean(np.concatenate([yh, ya])), 1e-3)
-        theta0 = np.zeros(2 + 2 * n)
+        theta0 = np.zeros(2 + 2 * n + n_ligas - 1)
         theta0[0] = np.log(media)
         res = minimize(objetivo, theta0, jac=True, method="L-BFGS-B")
         theta = res.x
         self.mu, self.ventaja = theta[0], theta[1]
-        self.ataque, self.defensa = theta[2 : 2 + n], theta[2 + n :]
+        self.ataque, self.defensa = theta[2 : 2 + n], theta[2 + n : 2 + 2 * n]
+        self.nivel_liga = np.concatenate([[0.0], theta[2 + 2 * n :]])
 
         # Sobredispersión de Pearson ponderada: var ≈ φ·media
-        lh = np.exp(self.mu + self.ventaja + self.ataque[h] + self.defensa[a])
-        la = np.exp(self.mu + self.ataque[a] + self.defensa[h])
+        nivel = self.nivel_liga[lg]
+        lh = np.exp(self.mu + self.ventaja + self.ataque[h] + self.defensa[a] + nivel)
+        la = np.exp(self.mu + self.ataque[a] + self.defensa[h] + nivel)
         pearson = np.concatenate([(yh - lh) ** 2 / lh, (ya - la) ** 2 / la])
         pesos = np.concatenate([w, w])
-        g_libertad = 1 - (2 + 2 * n) / (2 * len(df))
+        g_libertad = 1 - len(theta) / (2 * len(df))
         self.dispersion = float(max(1.0, np.sum(pesos * pearson) / np.sum(pesos) / max(g_libertad, 0.5)))
         self.n_partidos = len(df)
         return self
 
     def predecir(self, local: str, visitante: str) -> Prediccion:
         i, j = self.indice[local], self.indice[visitante]
-        lh = np.exp(self.mu + self.ventaja + self.ataque[i] + self.defensa[j])
-        la = np.exp(self.mu + self.ataque[j] + self.defensa[i])
+        # Partido entre ligas distintas: se usa el nivel medio de ambas
+        nivel = (self.nivel_liga[self.liga_de[local]] + self.nivel_liga[self.liga_de[visitante]]) / 2
+        lh = np.exp(self.mu + self.ventaja + self.ataque[i] + self.defensa[j] + nivel)
+        la = np.exp(self.mu + self.ataque[j] + self.defensa[i] + nivel)
         return Prediccion(float(lh), float(la), self.dispersion)
 
 

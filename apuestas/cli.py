@@ -11,19 +11,38 @@ import sys
 import pandas as pd
 
 from . import backtest, datos, odds_api
-from .mercados import NOMBRES, Seleccion, matriz_conjunta, mercados_estandar, probabilidad
+from .mercados import NOMBRES, calibrar_goles, Seleccion, matriz_conjunta, mercados_estandar, probabilidad
 from .modelo import ModeloPartido
 from .nombres import emparejar
 from .valor import Config, es_recomendable, stake, valor_esperado
 
 
-def _modelo(liga: str, temporadas: int, vida_media: float) -> tuple[ModeloPartido, pd.DataFrame]:
-    df = datos.cargar(liga, datos.temporadas_recientes(temporadas))
+def _modelo(ligas: list[str], temporadas: int, vida_media: float) -> tuple[ModeloPartido, pd.DataFrame]:
+    df = pd.concat([datos.cargar(liga, datos.temporadas_recientes(temporadas)) for liga in ligas], ignore_index=True)
+    df = df.sort_values("Fecha").reset_index(drop=True)
     return ModeloPartido(vida_media).ajustar(df, fecha_ref=pd.Timestamp.today().normalize()), df
 
 
 def _config(a) -> Config:
     return Config(ventaja_minima=a.ventaja, cuota_maxima=a.cuota_max, fraccion_kelly=a.kelly)
+
+
+def _nombre_ligas(ligas: list[str]) -> str:
+    return " + ".join(datos.LIGAS[l][0] for l in ligas)
+
+
+def _predicciones(a, modelo: ModeloPartido, local: str, visitante: str):
+    """Predicciones del modelo, calibradas con las cuotas 1X2 del mercado si se pasan."""
+    preds = modelo.predecir(local, visitante)
+    if a.mercado_1x2:
+        original = preds["goles"]
+        preds["goles"] = calibrar_goles(original, *a.mercado_1x2)
+        print(f"Goles calibrados con el 1X2 del mercado {a.mercado_1x2}: "
+              f"{original.local:.2f}-{original.visitante:.2f} -> {preds['goles'].local:.2f}-{preds['goles'].visitante:.2f}")
+    elif len(a.liga) > 1:
+        print("Aviso: equipos de ligas distintas; el modelo supone que las ligas tienen el mismo nivel. "
+              "Usa --mercado-1x2 C1 CX C2 para calibrar los goles con las cuotas de la casa.")
+    return preds
 
 
 def cmd_equipos(a):
@@ -34,8 +53,8 @@ def cmd_equipos(a):
 def cmd_predecir(a):
     modelo, _ = _modelo(a.liga, a.temporadas, a.vida_media)
     local, visitante = modelo.resolver_equipo(a.local), modelo.resolver_equipo(a.visitante)
-    preds = modelo.predecir(local, visitante)
-    print(f"\n{local} vs {visitante}  ({datos.LIGAS.get(a.liga, (a.liga,))[0]})\n")
+    print(f"\n{local} vs {visitante}  ({_nombre_ligas(a.liga)})\n")
+    preds = _predicciones(a, modelo, local, visitante)
     print("Medias esperadas:")
     for est, p in preds.items():
         print(f"  {NOMBRES[est]:<20} {p.local:5.2f} - {p.visitante:5.2f}   total {p.local + p.visitante:5.2f}")
@@ -54,7 +73,7 @@ def cmd_cuota(a):
     """Evalúa una cuota que el usuario ha visto en su casa de apuestas."""
     modelo, _ = _modelo(a.liga, a.temporadas, a.vida_media)
     local, visitante = modelo.resolver_equipo(a.local), modelo.resolver_equipo(a.visitante)
-    preds = modelo.predecir(local, visitante)
+    preds = _predicciones(a, modelo, local, visitante)
     if a.estadistica not in preds:
         sys.exit(f"Sin datos de {a.estadistica} para esta liga")
     sel = Seleccion(a.estadistica, a.tipo, a.lado, a.linea)
@@ -65,6 +84,10 @@ def cmd_cuota(a):
     print(f"  Probabilidad modelo: {p:.1%}" + (f" (nulo {nulo:.1%})" if nulo else ""))
     print(f"  Cuota justa: {(1 - nulo) / max(p, 1e-9):.2f}")
     print(f"  Valor esperado: {ev:+.1%}")
+    implicita = 1 / a.precio
+    if abs(p - implicita) > 0.15:
+        print(f"  ⚠️  La casa da un {implicita:.0%} y el modelo un {p:.0%}: con tanta diferencia lo más probable "
+              "es que el modelo se equivoque (lesiones, árbitro, tipo de partido...)")
     if es_recomendable(p, a.precio, nulo, cfg):
         print(f"  ✅ Hay valor. Apuesta sugerida: {stake(p, a.precio, nulo, cfg):.1%} del bankroll")
     else:
@@ -73,13 +96,13 @@ def cmd_cuota(a):
 
 def cmd_valor(a):
     cfg = _config(a)
-    sport = datos.LIGAS[a.liga][1]
+    sport = a.competicion or datos.LIGAS[a.liga[0]][1]
     modelo, _ = _modelo(a.liga, a.temporadas, a.vida_media)
     eventos = odds_api.eventos(sport, a.regiones)
     if a.dias:
         limite = pd.Timestamp.now(tz="UTC") + pd.Timedelta(days=a.dias)
         eventos = [e for e in eventos if pd.Timestamp(e.inicio) <= limite]
-    print(f"{len(eventos)} partidos con cuotas en {datos.LIGAS[a.liga][0]}")
+    print(f"{len(eventos)} partidos con cuotas en {sport}")
     recomendaciones = []
     for ev in eventos:
         local, visitante = emparejar(ev.local, modelo.equipos), emparejar(ev.visitante, modelo.equipos)
@@ -108,7 +131,7 @@ def cmd_valor(a):
         print("\nNo hay apuestas con valor según el modelo.")
         return
     tabla = pd.DataFrame(recomendaciones).sort_values("valor", ascending=False).head(a.top)
-    _registrar(tabla, a.liga)
+    _registrar(tabla, "+".join(a.liga))
     print(f"\nApuestas con valor según el modelo (EV ≥ {cfg.ventaja_minima:.0%}):")
     print("  Ojo: en backtests el modelo NO bate al mercado en 1X2 ni en goles; trátalo como orientación.\n")
     for _, r in tabla.iterrows():
@@ -129,8 +152,8 @@ def cmd_backtest(a):
     temporada = a.temporada or datos.temporadas_recientes(2)[0]
     inicio = 2000 + int(temporada[:2])
     previas = [f"{y % 100:02d}{(y + 1) % 100:02d}" for y in range(inicio - 3, inicio + 1)]
-    df = datos.cargar(a.liga, previas)
-    print(f"Backtest {datos.LIGAS[a.liga][0]} {temporada} con cuotas de cierre '{a.casa}'...\n")
+    df = datos.cargar(a.liga[0], previas)
+    print(f"Backtest {datos.LIGAS[a.liga[0]][0]} {temporada} con cuotas de cierre '{a.casa}'...\n")
     res = backtest.ejecutar(df, temporada, a.casa, cfg, a.vida_media)
     print(backtest.informe(res))
 
@@ -138,7 +161,10 @@ def cmd_backtest(a):
 def main(argv=None):
     p = argparse.ArgumentParser(prog="apuestas", description="Recomendador de apuestas de fútbol")
     comun = argparse.ArgumentParser(add_help=False)
-    comun.add_argument("--liga", default="SP1", choices=list(datos.LIGAS), help="código de liga (SP1 = LaLiga)")
+    comun.add_argument("--liga", nargs="+", default=["SP1"], choices=list(datos.LIGAS),
+                       help="código(s) de liga (SP1 = LaLiga); varias para partidos europeos, p. ej. F1 SP1")
+    comun.add_argument("--mercado-1x2", nargs=3, type=float, metavar=("C1", "CX", "C2"),
+                       help="cuotas 1X2 de la casa para calibrar los goles (útil entre ligas distintas)")
     comun.add_argument("--temporadas", type=int, default=3, help="temporadas de historial para entrenar")
     comun.add_argument("--vida-media", type=float, default=240, help="días en que el peso de un partido se reduce a la mitad")
     comun.add_argument("--ventaja", type=float, default=0.05, help="valor esperado mínimo (0.05 = 5 %%)")
@@ -165,6 +191,8 @@ def main(argv=None):
     s.set_defaults(f=cmd_cuota)
 
     s = sub.add_parser("valor", parents=[comun], help="busca apuestas con valor en las cuotas actuales (The Odds API)")
+    s.add_argument("--competicion", choices=list(datos.COMPETICIONES.values()),
+                   help="clave de The Odds API si no es una liga, p. ej. soccer_uefa_champs_league")
     s.add_argument("--extra", action="store_true", help="pide también córners, tarjetas, ambos marcan... (más créditos)")
     s.add_argument("--regiones", default="eu", help="regiones de casas: eu, uk, us, au")
     s.add_argument("--dias", type=float, default=7, help="solo partidos en los próximos N días")

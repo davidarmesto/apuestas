@@ -90,3 +90,13 @@ def test_parsear_evento_odds_api():
     assert mejores[Seleccion("goles", "1x2", "1")].precio == 2.6
     assert mejores[Seleccion("goles", "1x2", "1")].casa == "B"
     assert Seleccion("corners", "total", "mas", 9.5) in mejores
+
+
+def test_calibrar_goles_reproduce_mercado():
+    from apuestas.mercados import calibrar_goles
+
+    cal = calibrar_goles(Prediccion(1.8, 1.8), 2.10, 3.80, 3.40)
+    m = matriz_conjunta(cal)
+    p1 = probabilidad(cal, Seleccion("goles", "1x2", "1"), m)[0]
+    assert p1 == pytest.approx(sin_margen([2.10, 3.80, 3.40])[0], abs=0.005)
+    assert cal.local > cal.visitante
