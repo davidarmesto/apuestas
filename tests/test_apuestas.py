@@ -245,3 +245,10 @@ def test_remates_siguen_a_los_goles_del_mercado():
     sube = nuevas["goles"].local / preds["goles"].local
     assert sube > 1.2
     assert nuevas["remates_puerta"].local / 5.0 == pytest.approx(sube ** 0.6, rel=1e-6)
+
+
+def test_sin_margen_potencia_quita_mas_a_las_sorpresas():
+    prop = sin_margen([1.30, 5.0, 9.0], "proporcional")
+    pot = sin_margen([1.30, 5.0, 9.0])
+    assert sum(pot) == pytest.approx(1)
+    assert pot[2] < prop[2] and pot[0] > prop[0]
