@@ -434,6 +434,24 @@ def cmd_barrido(a):
               + " | ".join(f"{s.lado} @{c} {casa}" for s, c, casa in arb.patas))
 
 
+def historial(ruta_salida=None) -> pd.DataFrame:
+    """Apuestas reales con su valor esperado, listas para publicar (sin datos de la cuenta)."""
+    df = pd.read_csv(datos.DIR_DATOS / "apuestas_reales.csv")
+    df.insert(0, "n", range(1, len(df) + 1))
+    df["valor_esperado"] = (df["prob_estimada"] * df["cuota"] - 1).round(4)
+    df["beneficio_esperado"] = (df["valor_esperado"] * df["importe"]).round(2)
+    df["estado"] = df["beneficio"].map(lambda b: "pendiente" if pd.isna(b) else "ganada" if b > 0 else "perdida")
+    salida = df[["n", "fecha", "partido", "casa", "apuesta", "cuota", "importe", "prob_estimada",
+                 "valor_esperado", "beneficio_esperado", "estado", "beneficio"]]
+    if ruta_salida:
+        salida.to_csv(ruta_salida, index=False)
+    return salida
+
+
+def cmd_historial(a):
+    print(historial(a.salida).to_string(index=False))
+
+
 def cmd_balance(a):
     ruta = datos.DIR_DATOS / "apuestas_reales.csv"
     if not ruta.exists():
@@ -605,6 +623,10 @@ def main(argv=None):
     s.add_argument("--top", type=int, default=25)
     s.add_argument("--solo-listar", action="store_true", help="solo dice qué competiciones hay (gratis)")
     s.set_defaults(f=cmd_barrido)
+
+    s = sub.add_parser("historial", help="exporta las apuestas reales con su valor esperado (CSV)")
+    s.add_argument("--salida", default=str(datos.DIR_DATOS / "historial.csv"))
+    s.set_defaults(f=cmd_historial)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")
