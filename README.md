@@ -92,6 +92,15 @@ y si se coge la cuota media o la mejor. Las casas fijan esas líneas con mucha m
 información (alineaciones, lesiones, dinero apostado).
 
 Para córners, tarjetas y remates no hay cuotas históricas gratis, así que no se
-puede simular el ROI; el modelo predice los totales solo un 1–3 % mejor que la
-media de la liga. Son mercados menos eficientes, pero que tengan valor está
+puede simular el ROI. El backtest mide la calibración de los "más de" en la línea
+habitual de la liga (Brier frente a usar siempre la frecuencia de la liga, temporada
+25/26 en Ligue 1, LaLiga y Premier):
+
+- Lo de cada equipo (córners, remates a puerta del local o del visitante) sí lo
+  predice mejor que la media: un 1–14 % menos de error.
+- El total de córners del partido, no: queda igual o peor que la frecuencia de la liga.
+  Para totales conviene `--anclar` y fiarse de las casas.
+- Las medias se encogen hacia la media de la liga según la estadística (mucho más
+  en córners y tarjetas que en goles), elegido por verosimilitud fuera de muestra en
+  cinco ligas; antes el modelo se pasaba de seguro (decía 70 % y salía 50–60 %). Son mercados menos eficientes, pero que tengan valor está
 **sin demostrar**. Apuesta solo lo que estés dispuesto a perder.

@@ -128,13 +128,19 @@ class ModeloConteo:
 # fuera de muestra (en córners, la correlación completa empeoraba las líneas de totales).
 FACTOR_CORRELACION = {"corners": 0.5}
 
+# Cuánto se acerca cada equipo a la media (penalización L2). Elegida por verosimilitud fuera de muestra
+# (temporadas 24/25 y 25/26, cinco grandes ligas): en córners, tarjetas y remates las diferencias entre
+# equipos son en buena parte ruido y conviene encoger mucho más que en goles.
+REGULARIZACION = {"goles": 4.0, "corners": 20.0, "tarjetas": 16.0, "amarillas": 16.0, "remates_puerta": 12.0}
+REGULARIZACION_POR_DEFECTO = 8.0
+
 
 class ModeloPartido:
     """Agrupa un ModeloConteo por cada estadística disponible en los datos."""
 
-    def __init__(self, vida_media_dias: float = 240, regularizacion: float = 2.0):
+    def __init__(self, vida_media_dias: float = 240, regularizacion: float | None = None):
         self.vida_media_dias = vida_media_dias
-        self.regularizacion = regularizacion
+        self.regularizacion = regularizacion  # None: la de cada estadística (REGULARIZACION)
         self.modelos: dict[str, ModeloConteo] = {}
 
     def ajustar(self, df: pd.DataFrame, fecha_ref=None, estadisticas=None) -> "ModeloPartido":
@@ -143,7 +149,8 @@ class ModeloPartido:
                 continue
             if cl not in df.columns or df[cl].notna().sum() < 30:
                 continue
-            modelo = ModeloConteo(self.vida_media_dias, self.regularizacion)
+            reg = self.regularizacion or REGULARIZACION.get(nombre, REGULARIZACION_POR_DEFECTO)
+            modelo = ModeloConteo(self.vida_media_dias, reg)
             self.modelos[nombre] = modelo.ajustar(df, cl, cv, fecha_ref)
             modelo.correlacion *= FACTOR_CORRELACION.get(nombre, 1.0)
         # Correlaciones entre estadísticas (p. ej. goles y remates a puerta del mismo equipo)
