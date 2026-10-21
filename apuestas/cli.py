@@ -354,6 +354,10 @@ def cmd_backtest(a):
     inicio = 2000 + int(temporada[:2])
     previas = [f"{y % 100:02d}{(y + 1) % 100:02d}" for y in range(inicio - 3, inicio + 1)]
     df = datos.cargar(a.liga[0], previas)
+    if a.combinadas:
+        print(f"Combinadas en {datos.LIGAS[a.liga[0]][0]} {temporada}...\n")
+        print(backtest.informe_combinadas(backtest.calibrar_combinadas(df, temporada, a.vida_media)))
+        return
     print(f"Backtest {datos.LIGAS[a.liga[0]][0]} {temporada} con cuotas de cierre '{a.casa}'...\n")
     res = backtest.ejecutar(df, temporada, a.casa, cfg, a.vida_media)
     print(backtest.informe(res))
@@ -450,6 +454,8 @@ def main(argv=None):
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")
     s.add_argument("--casa", default="media", choices=list(backtest.CASAS))
+    s.add_argument("--combinadas", action="store_true",
+                   help="comprueba con partidos reales cuántas veces salen las combinadas típicas")
     s.set_defaults(f=cmd_backtest)
 
     a = p.parse_args(argv)

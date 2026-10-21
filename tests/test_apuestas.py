@@ -209,3 +209,14 @@ def test_directo_suma_lo_que_ya_ha_pasado():
     p = probabilidad_combinada(preds, [mas45, jugador], None, lams, {"corners": (3, 0)},
                                {("Ferran Torres", "remates_puerta"): 2})
     assert p == pytest.approx(con_tres)
+
+
+def test_gana_seleccion_con_resultado_real():
+    from apuestas.backtest import _gana_seleccion
+    from apuestas.combinadas import parsear_pierna
+
+    fila = {"FTHG": 2, "FTAG": 1, "HC": 6, "AC": 3}
+    assert _gana_seleccion(parsear_pierna("goles 1x2 1"), fila)
+    assert _gana_seleccion(parsear_pierna("goles btts si"), fila)
+    assert not _gana_seleccion(parsear_pierna("goles total mas 3.5"), fila)
+    assert _gana_seleccion(parsear_pierna("corners local mas 5.5"), fila)

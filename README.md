@@ -62,6 +62,9 @@ cp .env.example .env   # y pon tu ODDS_API_KEY
     --pierna "corners local mas 4.5" --pierna "jugador visitante remates_puerta mas 1.5 Ferran" \
     --cuota 3.90 --importe 5 --cashout 3
 
+# Comprobar las combinadas con partidos reales (con y sin correlaciones)
+.venv/bin/python -m apuestas backtest --liga SP1 --temporada 2526 --combinadas
+
 # Balance de las apuestas reales apuntadas en datos/apuestas_reales.csv
 .venv/bin/python -m apuestas balance
 
@@ -108,3 +111,10 @@ habitual de la liga (Brier frente a usar siempre la frecuencia de la liga, tempo
   en córners y tarjetas que en goles), elegido por verosimilitud fuera de muestra en
   cinco ligas; antes el modelo se pasaba de seguro (decía 70 % y salía 50–60 %). Son mercados menos eficientes, pero que tengan valor está
 **sin demostrar**. Apuesta solo lo que estés dispuesto a perder.
+
+Las **combinadas** sí se pueden comprobar con partidos reales (`backtest --combinadas`).
+En LaLiga, Premier, Ligue 1, Bundesliga y Serie A (24/25 y 25/26, ~3.500 partidos), las
+combinadas típicas salieron un 97–105 % de las veces que decía el modelo, con las
+correlaciones. Multiplicando las probabilidades como si fueran independientes, el error
+llega al 30–50 % (p. ej. "ambos marcan + más de 2,5": sale el 43 %, el modelo dice
+42 % y como independientes saldría 29 %).

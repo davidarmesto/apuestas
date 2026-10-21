@@ -187,3 +187,80 @@ def _informe_calibracion(res: Resultado) -> list[str]:
             lineas.append(f"  {mercado:<30} n={len(g):<4} modelo {b_m:.4f}  liga {b_l:.4f}  "
                           f"mejora {(1 - b_m / b_l) * 100:+5.1f} %{extra}")
     return lineas
+
+
+# Combinadas típicas de "crear apuesta" para comprobar el cálculo conjunto con partidos reales
+PLANTILLAS_COMBINADAS = {
+    "Gana local + más de 2,5": ["goles 1x2 1", "goles total mas 2.5"],
+    "Gana local + ambos marcan": ["goles 1x2 1", "goles btts si"],
+    "Ambos marcan + más de 2,5": ["goles btts si", "goles total mas 2.5"],
+    "Gana local + ambos marcan + más de 3,5": ["goles 1x2 1", "goles btts si", "goles total mas 3.5"],
+    "Goles local >1,5 + a puerta local >4,5": ["goles local mas 1.5", "remates_puerta local mas 4.5"],
+    "Goles local >1,5 + córners local >5,5": ["goles local mas 1.5", "corners local mas 5.5"],
+    "Gana local + córners local >5,5": ["goles 1x2 1", "corners local mas 5.5"],
+    "Córners local >5,5 + a puerta local >4,5": ["corners local mas 5.5", "remates_puerta local mas 4.5"],
+    "Córners local >4,5 + córners visit. >3,5": ["corners local mas 4.5", "corners visitante mas 3.5"],
+    "Tarjetas local >1,5 + visit. >1,5": ["tarjetas local mas 1.5", "tarjetas visitante mas 1.5"],
+    "Más de 2,5 + córners >9,5": ["goles total mas 2.5", "corners total mas 9.5"],
+    "Más de 2,5 + tarjetas >3,5": ["goles total mas 2.5", "tarjetas total mas 3.5"],
+}
+
+
+def _gana_seleccion(s: Seleccion, fila) -> bool:
+    cl, cv = ESTADISTICAS[s.estadistica]
+    l, v = fila[cl], fila[cv]
+    if s.tipo == "1x2":
+        return {"1": l > v, "X": l == v, "2": l < v}[s.lado]
+    if s.tipo == "btts":
+        return (l > 0 and v > 0) == (s.lado == "si")
+    valor = {"total": l + v, "local": l, "visitante": v}[s.tipo]
+    return valor > s.linea if s.lado == "mas" else valor < s.linea
+
+
+def calibrar_combinadas(df: pd.DataFrame, temporada: str, vida_media_dias: float = 240) -> pd.DataFrame:
+    """Para cada combinada típica: cuántas veces salió de verdad, qué decía el modelo con sus
+    correlaciones y qué habría dicho multiplicando las probabilidades como si fueran independientes."""
+    from .combinadas import parsear_pierna, probabilidad_combinada
+
+    plantillas = {n: [parsear_pierna(t) for t in ps] for n, ps in PLANTILLAS_COMBINADAS.items()}
+    test = df[df["Temporada"] == temporada]
+    filas = []
+    # Reajuste mensual: las correlaciones y los equipos cambian poco de una semana a otra
+    for _, bloque in test.groupby(test["Fecha"].dt.to_period("M")):
+        inicio = bloque["Fecha"].min()
+        entreno = df[(df["Fecha"] < inicio) & (df["Fecha"] >= inicio - pd.Timedelta(days=3 * 365))]
+        try:
+            modelo = ModeloPartido(vida_media_dias).ajustar(
+                entreno, fecha_ref=inicio, estadisticas=["goles", "corners", "tarjetas", "remates_puerta"])
+        except ValueError:
+            continue
+        for _, fila in bloque.iterrows():
+            try:
+                preds = modelo.predecir(fila["HomeTeam"], fila["AwayTeam"])
+            except KeyError:
+                continue
+            for nombre, piernas in plantillas.items():
+                if any(s.estadistica not in preds or pd.isna(fila.get(c)) for s in piernas for c in ESTADISTICAS[s.estadistica]):
+                    continue
+                filas.append({
+                    "combinada": nombre,
+                    "sale": all(_gana_seleccion(s, fila) for s in piernas),
+                    "modelo": probabilidad_combinada(preds, piernas, modelo.correlaciones),
+                    "independientes": float(np.prod([probabilidad_combinada(preds, [s]) for s in piernas])),
+                })
+    r = pd.DataFrame(filas)
+    if r.empty:
+        raise ValueError(f"No hay partidos de la temporada {temporada}")
+    return r.groupby("combinada", sort=False).agg(
+        n=("sale", "size"), sale=("sale", "mean"), modelo=("modelo", "mean"), independientes=("independientes", "mean"))
+
+
+def informe_combinadas(tabla: pd.DataFrame) -> str:
+    lineas = ["Combinadas: % de veces que salieron frente a lo que decía el modelo", "",
+              f"  {'':<42} {'partidos':>8} {'salió':>7} {'modelo':>7} {'si fueran indep.':>17}"]
+    for nombre, f in tabla.iterrows():
+        lineas.append(f"  {nombre:<42} {int(f.n):>8} {f.sale:>7.1%} {f.modelo:>7.1%} {f.independientes:>17.1%}")
+    err_m = (tabla.modelo - tabla.sale).abs().mean()
+    err_i = (tabla.independientes - tabla.sale).abs().mean()
+    lineas.append(f"\n  Error medio: modelo {err_m:.1%}, independientes {err_i:.1%} (puntos de probabilidad)")
+    return "\n".join(lineas)
