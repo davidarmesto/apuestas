@@ -234,6 +234,81 @@ def cmd_valor(a):
             print(f"  {r.partido}: {r.apuesta} @ {r.cuota:.2f}  (modelo {r.prob:.0%}, casas {1 / r.cuota:.0%})")
 
 
+def _jugador_y_valor(texto: str, tipo=float) -> tuple[tuple[str, str], float]:
+    """'remates_puerta 2 Ferran Torres' -> (('Ferran Torres', 'remates_puerta'), 2)."""
+    partes = texto.replace(",", ".").split()
+    if len(partes) < 3:
+        raise ValueError(f"Formato 'estadistica numero nombre', p. ej. 'remates_puerta 2 Ferran': {texto!r}")
+    return (" ".join(partes[2:]), partes[0]), tipo(partes[1])
+
+
+def cmd_directo(a):
+    from .combinadas import buscar_jugador, parsear_pierna, probabilidad_combinada
+    from .directo import fraccion_restante, predicciones_restantes
+
+    local, visitante, preds, _, modelo, jugadores = _preparar(a)
+    jugadores = dict(jugadores)
+    for texto in a.media_jugador or []:
+        clave, media = _jugador_y_valor(texto)
+        jugadores[clave] = media
+    marcador = {est: (int(l), int(v)) for est, l, v in (a.marcador or [])}
+    lleva = dict(_jugador_y_valor(t, int) for t in a.lleva or [])
+    restantes = predicciones_restantes(preds, a.minuto)
+    # A cada jugador le queda la misma parte del partido que a su estadística
+    jugadores_rest = {(j, est): lam * fraccion_restante(est, a.minuto) for (j, est), lam in jugadores.items()}
+    piernas = [parsear_pierna(t) for t in a.pierna]
+
+    print(f"\n{local} vs {visitante} — minuto {a.minuto:g}")
+    for est, (l, v) in marcador.items():
+        r = restantes.get(est)
+        extra = f"   (faltan de media {r.local:.1f} - {r.visitante:.1f})" if r else ""
+        print(f"  {NOMBRES.get(est, est):<18} {l} - {v}{extra}")
+    for (j, est), n in lleva.items():
+        print(f"  {j}: {n} {NOMBRES.get(est, est).lower()}")
+    print()
+    for s in piernas:
+        if s.tipo == "jugador" and buscar_jugador(s.jugador, jugadores_rest, s.estadistica) is None:
+            sys.exit(f"Sin media de {s.jugador}: usa --anclar --jugadores o --media-jugador '{s.estadistica} 1.2 {s.jugador}'")
+        p = probabilidad_combinada(restantes, [s], None, jugadores_rest, marcador, lleva)
+        estado = "✅ ganada" if p > 1 - 1e-9 else "❌ perdida" if p < 1e-9 else f"{p:6.1%}"
+        print(f"  • {s.describir(local, visitante):<55} {estado}")
+    p = probabilidad_combinada(restantes, piernas, modelo.correlaciones, jugadores_rest, marcador, lleva)
+    print(f"\n  Probabilidad de que salga todo: {p:.1%}")
+    if a.cuota and a.importe:
+        cobro = a.cuota * a.importe
+        valor = p * cobro
+        print(f"  Cobras {cobro:.2f} € si sale; ahora mismo la apuesta vale ~{valor:.2f} €")
+        if a.cashout is not None:
+            consejo = "✅ acéptalo: te ofrecen más de lo que vale" if a.cashout > valor else \
+                "❌ no lo aceptes: vale más dejarla correr"
+            print(f"  Te ofrecen {a.cashout:.2f} € por cerrarla: {consejo}")
+    print("  Ojo: no tiene en cuenta cómo va el partido (quién domina, expulsiones, cambios).")
+
+
+def cmd_balance(a):
+    ruta = datos.DIR_DATOS / "apuestas_reales.csv"
+    if not ruta.exists():
+        sys.exit(f"No hay apuestas apuntadas ({ruta})")
+    df = pd.read_csv(ruta)
+    cerradas = df[df["beneficio"].notna()]
+    pendientes = df[df["beneficio"].isna()]
+    print(f"\nApuestas reales: {len(df)} ({len(cerradas)} cerradas, {len(pendientes)} pendientes)\n")
+    for _, r in df.iterrows():
+        resultado = f"{r.beneficio:+.2f} €" if pd.notna(r.beneficio) else "pendiente"
+        print(f"  {r.fecha}  {r.casa:<8} {r.importe:5.2f} € @ {r.cuota:<5.2f} {resultado:>10}  {r.apuesta}")
+    if cerradas.empty:
+        return
+    apostado, beneficio = cerradas["importe"].sum(), cerradas["beneficio"].sum()
+    ganadas = int((cerradas["beneficio"] > 0).sum())
+    esperadas = cerradas["prob_estimada"].sum()
+    ev = (cerradas["prob_estimada"] * cerradas["cuota"] - 1) @ cerradas["importe"]
+    print(f"\n  Apostado {apostado:.2f} €, beneficio {beneficio:+.2f} € (ROI {beneficio / apostado:+.1%})")
+    print(f"  Acertadas {ganadas} de {len(cerradas)}; el modelo esperaba {esperadas:.1f}")
+    print(f"  Beneficio que esperaba el modelo: {ev:+.2f} €")
+    if len(cerradas) < 50:
+        print("  Con menos de ~50 apuestas el resultado es sobre todo suerte: no saques conclusiones todavía.")
+
+
 def _registrar(tabla: pd.DataFrame, liga: str) -> None:
     """Guarda las recomendaciones para poder medir después si el modelo acierta en mercados sin histórico de cuotas."""
     ruta = datos.DIR_DATOS / "registro.csv"
@@ -322,6 +397,21 @@ def main(argv=None):
     s.add_argument("--solo", nargs="+", help="estadísticas permitidas, p. ej. goles corners")
     s.add_argument("--top", type=int, default=15)
     s.set_defaults(f=cmd_sugerir)
+
+    s = sub.add_parser("directo", parents=[comun, anclaje], help="cuánto vale una combinada con el partido empezado")
+    s.add_argument("--minuto", type=float, required=True)
+    s.add_argument("--pierna", action="append", required=True, help="una selección; repítelo por cada una")
+    s.add_argument("--marcador", nargs=3, action="append", metavar=("ESTADISTICA", "LOCAL", "VISITANTE"),
+                   help="lo que llevan los equipos, p. ej. --marcador corners 2 1 --marcador goles 0 0")
+    s.add_argument("--lleva", action="append", help="lo que lleva un jugador, p. ej. 'remates_puerta 2 Ferran'")
+    s.add_argument("--media-jugador", action="append",
+                   help="media de un jugador en un partido entero si no hay cuotas, p. ej. 'remates_puerta 1.1 Ferran'")
+    s.add_argument("--cuota", type=float, help="cuota de la apuesta")
+    s.add_argument("--importe", type=float, help="euros apostados")
+    s.add_argument("--cashout", type=float, help="lo que te ofrece la casa por cerrarla ahora")
+    s.set_defaults(f=cmd_directo)
+
+    sub.add_parser("balance", help="resultado de las apuestas reales apuntadas").set_defaults(f=cmd_balance)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")

@@ -65,18 +65,25 @@ def buscar_jugador(nombre: str, jugadores: dict[tuple[str, str], float], estadis
     return candidatos[0] if len(candidatos) == 1 else None
 
 
-def _p_jugador(lam: float, s: Seleccion) -> float:
-    mas = float(stats.poisson.sf(math.floor(s.linea), lam))
+def _p_jugador(lam: float, s: Seleccion, lleva: int = 0) -> float:
+    mas = float(stats.poisson.sf(math.floor(s.linea) - lleva, lam))
     if s.lado == "mas":
         return mas
-    nulo = float(stats.poisson.pmf(s.linea, lam)) if s.linea == int(s.linea) else 0.0
+    nulo = float(stats.poisson.pmf(s.linea - lleva, lam)) if s.linea == int(s.linea) else 0.0
     return 1 - mas - nulo
 
 
 def probabilidad_combinada(preds: dict[str, Prediccion], piernas: list[Seleccion],
                            correlaciones: pd.DataFrame | None = None,
-                           jugadores: dict[tuple[str, str], float] | None = None) -> float:
-    """Probabilidad de que ganen todas las piernas (sin nulos: usa líneas .5)."""
+                           jugadores: dict[tuple[str, str], float] | None = None,
+                           marcador: dict[str, tuple[int, int]] | None = None,
+                           lleva: dict[tuple[str, str], int] | None = None) -> float:
+    """Probabilidad de que ganen todas las piernas (sin nulos: usa líneas .5).
+
+    En directo, `preds` y `jugadores` son lo que queda por jugarse, `marcador` lo que ya
+    llevan los equipos en cada estadística y `lleva` lo que lleva cada jugador.
+    """
+    marcador, lleva = marcador or {}, lleva or {}
     por_est: dict[str, list[Seleccion]] = defaultdict(list)
     grupos: list[tuple[float, dict[str, float], float]] = []  # (probabilidad, cargas, ruido propio)
     for s in piernas:
@@ -92,13 +99,14 @@ def probabilidad_combinada(preds: dict[str, Prediccion], piernas: list[Seleccion
             media_equipo = (equipo.local if lado == "l" else equipo.visitante) if equipo else None
             carga = math.sqrt(min(0.8, lam / media_equipo)) if media_equipo else 0.0
             signo = 1 if s.lado == "mas" else -1
-            grupos.append((_p_jugador(lam, s), {f"{s.estadistica}_{lado}": signo * carga}, 1 - carga**2))
+            ya = _lleva_jugador(lleva, s)
+            grupos.append((_p_jugador(lam, s, ya), {f"{s.estadistica}_{lado}": signo * carga}, 1 - carga**2))
         else:
             por_est[s.estadistica].append(s)
     for est, sels in por_est.items():
         if est not in preds:
             raise ValueError(f"Sin datos de {est}")
-        m = matriz_conjunta(preds[est])
+        m = _desplazar(matriz_conjunta(preds[est]), marcador.get(est, (0, 0)))
         gana = np.ones(m.shape, dtype=bool)
         for s in sels:
             g, nulo = mascaras(s, m.shape)
@@ -107,10 +115,27 @@ def probabilidad_combinada(preds: dict[str, Prediccion], piernas: list[Seleccion
         dv = sum(_DIRECCION.get((s.tipo, s.lado), (0, 0))[1] for s in sels)
         grupos.append((float(m[gana].sum()), {f"{est}_l": dl, f"{est}_v": dv}, 0.0))
 
+    # Las piernas ya ganadas no aportan nada (y romperían la cópula)
+    grupos = [g for g in grupos if g[0] < 1 - 1e-12] or [(1.0, {}, 0.0)]
     probs = np.array([g[0] for g in grupos])
     if len(grupos) == 1 or correlaciones is None or np.any(probs <= 0):
         return float(np.prod(probs))
     return _copula(grupos, correlaciones)
+
+
+def _desplazar(m: np.ndarray, actual: tuple[int, int]) -> np.ndarray:
+    """Pasa de la distribución de lo que falta a la del total final sumando lo que ya ha pasado."""
+    cl, cv = actual
+    if not cl and not cv:
+        return m
+    salida = np.zeros((m.shape[0] + cl, m.shape[1] + cv))
+    salida[cl:, cv:] = m
+    return salida
+
+
+def _lleva_jugador(lleva: dict[tuple[str, str], int], s: Seleccion) -> int:
+    n = normalizar(s.jugador)
+    return sum(v for (j, est), v in lleva.items() if est == s.estadistica and (n in normalizar(j) or normalizar(j) in n))
 
 
 def _copula(grupos, correlaciones: pd.DataFrame) -> float:

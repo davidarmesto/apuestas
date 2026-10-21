@@ -178,3 +178,34 @@ def test_jugador_desde_cuotas():
     pierna = parsear_pierna("jugador local remates_puerta mas 1.5 dembele")
     p = probabilidad_combinada({"goles": Prediccion(1.5, 1.2)}, [pierna], None, lams)
     assert p == pytest.approx(st.poisson.sf(1, 1.6), abs=0.04)
+
+
+def test_directo_reparte_el_partido():
+    from apuestas.directo import fraccion_restante, restante
+
+    assert fraccion_restante("goles", 0) == pytest.approx(1)
+    assert fraccion_restante("goles", 95) == pytest.approx(0)
+    # Más goles y, sobre todo, más tarjetas en la segunda parte
+    assert 0.52 < fraccion_restante("goles", 45) < 0.58
+    assert fraccion_restante("tarjetas", 45) > fraccion_restante("goles", 45)
+    r = restante(Prediccion(5.0, 4.0, 1.4), 0.5)
+    assert (r.local, r.visitante, r.dispersion) == pytest.approx((2.5, 2.0, 1.2))
+
+
+def test_directo_suma_lo_que_ya_ha_pasado():
+    from apuestas.combinadas import parsear_pierna, probabilidad_combinada
+
+    preds = {"corners": Prediccion(2.0, 1.5, 1.2), "goles": Prediccion(0.8, 0.6)}
+    mas45 = parsear_pierna("corners local mas 4.5")
+    sin_nada = probabilidad_combinada(preds, [mas45])
+    con_tres = probabilidad_combinada(preds, [mas45], marcador={"corners": (3, 0)})
+    # Con 3 córners hechos basta con 2 más
+    assert con_tres == pytest.approx(probabilidad(preds["corners"], parsear_pierna("corners local mas 1.5"))[0])
+    assert con_tres > sin_nada
+    assert probabilidad_combinada(preds, [mas45], marcador={"corners": (5, 0)}) == pytest.approx(1)
+    # Una pierna de jugador ya ganada no cambia la probabilidad de las demás
+    jugador = parsear_pierna("jugador local remates_puerta mas 1.5 Ferran")
+    lams = {("Ferran Torres", "remates_puerta"): 0.5}
+    p = probabilidad_combinada(preds, [mas45, jugador], None, lams, {"corners": (3, 0)},
+                               {("Ferran Torres", "remates_puerta"): 2})
+    assert p == pytest.approx(con_tres)

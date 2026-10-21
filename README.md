@@ -51,6 +51,16 @@ cp .env.example .env   # y pon tu ODDS_API_KEY
 .venv/bin/python -m apuestas sugerir PSG Barcelona --liga SP1 F1 --anclar \
     --competicion soccer_uefa_champs_league --regiones eu,uk,us --objetivo 3
 
+# En directo: cuánto vale la combinada y si conviene cerrarla (cash-out)
+.venv/bin/python -m apuestas directo PSG Barcelona --liga SP1 F1 --minuto 31 \
+    --marcador corners 1 0 --lleva "remates_puerta 1 Ferran" \
+    --media-jugador "remates_puerta 0.9 Ferran Torres" \
+    --pierna "corners local mas 4.5" --pierna "jugador visitante remates_puerta mas 1.5 Ferran" \
+    --cuota 3.90 --importe 5 --cashout 3
+
+# Balance de las apuestas reales apuntadas en datos/apuestas_reales.csv
+.venv/bin/python -m apuestas balance
+
 # Equipos de la liga (nombres tal como los usa el modelo)
 .venv/bin/python -m apuestas equipos --liga E0
 ```

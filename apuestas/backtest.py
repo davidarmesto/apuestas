@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .datos import ESTADISTICAS
-from .mercados import Seleccion, matriz_conjunta, probabilidad
+from .mercados import NOMBRES, Seleccion, matriz_conjunta, probabilidad
 from .modelo import ModeloPartido
 from .valor import Config, es_recomendable, sin_margen, stake
 
@@ -41,6 +41,8 @@ class Resultado:
     logloss_modelo: list[float] = field(default_factory=list)
     logloss_mercado: list[float] = field(default_factory=list)
     estadisticas: dict[str, list[tuple[float, float, float]]] = field(default_factory=dict)
+    # Por estadística: (mercado, probabilidad del modelo, frecuencia de la liga, si salió)
+    calibracion: dict[str, list[tuple[str, float, float, bool]]] = field(default_factory=dict)
 
 
 def _gana(sel: Seleccion, fila) -> bool:
@@ -58,7 +60,7 @@ def ejecutar(df: pd.DataFrame, temporada: str, casa: str = "media", cfg: Config 
     test = df[df["Temporada"] == temporada]
     if test.empty:
         raise ValueError(f"No hay partidos de la temporada {temporada}")
-    res = Resultado(estadisticas={e: [] for e in estadisticas})
+    res = Resultado(estadisticas={e: [] for e in estadisticas}, calibracion={e: [] for e in estadisticas})
     semanas = test["Fecha"].dt.to_period("W")
 
     for _, jornada in test.groupby(semanas):
@@ -101,6 +103,8 @@ def ejecutar(df: pd.DataFrame, temporada: str, casa: str = "media", cfg: Config 
                     })
     return res
 
+_MERCADO = {"total": "{}: total", "local": "{} del local", "visitante": "{} del visitante"}
+
 
 def _evaluar_estadisticas(res: Resultado, preds, fila, df_media: pd.DataFrame) -> None:
     for est, registros in res.estadisticas.items():
@@ -111,6 +115,20 @@ def _evaluar_estadisticas(res: Resultado, preds, fila, df_media: pd.DataFrame) -
         real = fila[cl] + fila[cv]
         ingenuo = (df_media[cl] + df_media[cv]).tail(380).mean()
         registros.append((p.local + p.visitante, ingenuo, real))
+        # Líneas habituales de las casas: el total y lo de cada equipo, alrededor de la media de la liga
+        recientes = df_media[[cl, cv]].dropna().tail(380)
+        m = matriz_conjunta(p)
+        for tipo, valores, real_tipo in (
+            ("total", recientes[cl] + recientes[cv], real),
+            ("local", recientes[cl], fila[cl]),
+            ("visitante", recientes[cv], fila[cv]),
+        ):
+            linea = float(np.floor(valores.median())) + 0.5
+            sel = Seleccion(est, tipo, "mas", linea)
+            res.calibracion[est].append(
+                (_MERCADO[tipo].format(NOMBRES[est]), probabilidad(p, sel, m)[0], float((valores > linea).mean()),
+                 bool(real_tipo > linea))
+            )
 
 
 def informe(res: Resultado) -> str:
@@ -128,6 +146,7 @@ def informe(res: Resultado) -> str:
         mejora = (1 - mae_m / mae_i) * 100
         lineas.append(f"  {est:<15} modelo {mae_m:5.2f}   media liga {mae_i:5.2f}   mejora {mejora:+.1f} %")
 
+    lineas += _informe_calibracion(res)
     ap = pd.DataFrame(res.apuestas)
     lineas.append("")
     if ap.empty:
@@ -145,3 +164,26 @@ def informe(res: Resultado) -> str:
     for mercado, fila in tabla.iterrows():
         lineas.append(f"  {mercado:<28} {int(fila.n):4d} apuestas  acierto {fila.acierto:5.1%}  {fila.unidades:+6.1f} u")
     return "\n".join(lineas)
+
+
+def _informe_calibracion(res: Resultado) -> list[str]:
+    """¿Las probabilidades de córners, tarjetas y remates salen tantas veces como dice el modelo?
+
+    Brier: error cuadrático de la probabilidad (menor es mejor), frente a usar siempre la
+    frecuencia de la liga. Si el modelo no mejora a la frecuencia, no sabe nada de ese mercado
+    más allá de la media.
+    """
+    lineas = ["\nCalibración de 'más de' en la línea habitual de la liga (Brier, menor es mejor; "
+              "'liga' = usar siempre la frecuencia de la liga):"]
+    for est, regs in res.calibracion.items():
+        if not regs:
+            continue
+        df = pd.DataFrame(regs, columns=["mercado", "p", "liga", "sale"])
+        for mercado, g in df.groupby("mercado", sort=False):
+            b_m, b_l = ((g.p - g.sale) ** 2).mean(), ((g.liga - g.sale) ** 2).mean()
+            # Cuando el modelo está más seguro (p ≥ 60 %), ¿cuántas veces sale de verdad?
+            seguras = g[g.p >= 0.6]
+            extra = f"   p≥60 %: dice {seguras.p.mean():.0%}, sale {seguras.sale.mean():.0%} (n={len(seguras)})" if len(seguras) >= 20 else ""
+            lineas.append(f"  {mercado:<30} n={len(g):<4} modelo {b_m:.4f}  liga {b_l:.4f}  "
+                          f"mejora {(1 - b_m / b_l) * 100:+5.1f} %{extra}")
+    return lineas
