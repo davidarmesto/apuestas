@@ -51,6 +51,10 @@ cp .env.example .env   # y pon tu ODDS_API_KEY
 .venv/bin/python -m apuestas sugerir PSG Barcelona --liga SP1 F1 --anclar \
     --competicion soccer_uefa_champs_league --regiones eu,uk,us --objetivo 3
 
+# Todas las casas y partidos de hoy: cuotas que pagan más que el consenso del mercado
+.venv/bin/python -m apuestas oportunidades --competicion soccer_uefa_champs_league --extra \
+    --casas Winamax Betfair Unibet
+
 # Cuotas justas de todos los mercados (anclado a las casas) para comparar con tu app
 .venv/bin/python -m apuestas justas "Real Madrid" "RB Leipzig" --liga SP1 D1 --anclar --jugadores \
     --competicion soccer_uefa_champs_league --regiones eu,uk,us

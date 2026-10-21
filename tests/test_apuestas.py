@@ -220,3 +220,17 @@ def test_gana_seleccion_con_resultado_real():
     assert _gana_seleccion(parsear_pierna("goles btts si"), fila)
     assert not _gana_seleccion(parsear_pierna("goles total mas 3.5"), fila)
     assert _gana_seleccion(parsear_pierna("corners local mas 5.5"), fila)
+
+
+def test_oportunidades_frente_al_consenso():
+    from apuestas.mercado import oportunidades
+    from apuestas.odds_api import Cuota, Evento
+
+    ev = Evento("x", "", "A", "B")
+    mas, menos = Seleccion("goles", "total", "mas", 2.5), Seleccion("goles", "total", "menos", 2.5)
+    for k in range(6):
+        ev.cuotas += [Cuota(mas, 1.90, f"C{k}"), Cuota(menos, 1.90, f"C{k}")]
+    ev.cuotas += [Cuota(mas, 2.20, "Generosa"), Cuota(menos, 1.70, "Generosa")]
+    ops = oportunidades(ev, min_casas=5)
+    assert [(o.casa, o.seleccion) for o in ops] == [("Generosa", mas)]
+    assert ops[0].valor == pytest.approx(0.5 * 2.20 - 1, abs=0.01)

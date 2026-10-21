@@ -115,6 +115,12 @@ class ModeloConteo:
         self.n_partidos = len(df)
         return self
 
+    def media(self) -> Prediccion:
+        """Partido entre dos equipos medios (para equipos sin datos; luego se ancla al mercado)."""
+        nivel = float(np.mean(self.nivel_liga))
+        return Prediccion(float(np.exp(self.mu + self.ventaja + nivel)), float(np.exp(self.mu + nivel)),
+                          self.dispersion, self.correlacion)
+
     def predecir(self, local: str, visitante: str) -> Prediccion:
         i, j = self.indice[local], self.indice[visitante]
         # Partido entre ligas distintas: se usa el nivel medio de ambas

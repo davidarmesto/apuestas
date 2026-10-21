@@ -51,7 +51,7 @@ def _anclar_al_mercado(a, modelo: ModeloPartido, local: str, visitante: str, pre
 
     sport = a.competicion or datos.LIGAS[a.liga[0]][1]
     for ev in odds_api.eventos(sport, a.regiones):
-        if (emparejar(ev.local, modelo.equipos), emparejar(ev.visitante, modelo.equipos)) == (local, visitante):
+        if (_mismo_equipo(ev.local, local, modelo) and _mismo_equipo(ev.visitante, visitante, modelo)):
             odds_api.cuotas_extra(sport, ev, a.regiones)
             if getattr(a, "jugadores", False):
                 odds_api.cuotas_extra(sport, ev, a.regiones, odds_api.MERCADOS_JUGADOR)
@@ -65,10 +65,27 @@ def _anclar_al_mercado(a, modelo: ModeloPartido, local: str, visitante: str, pre
     return preds, None
 
 
+def _mismo_equipo(nombre_casa: str, nombre: str, modelo: ModeloPartido) -> bool:
+    from .nombres import normalizar
+
+    if emparejar(nombre_casa, modelo.equipos) == nombre:
+        return True
+    n, c = normalizar(nombre), normalizar(nombre_casa)
+    return bool(n) and (n in c or c in n)
+
+
 def _preparar(a):
     modelo, _ = _modelo(a.liga, a.temporadas, a.vida_media)
-    local, visitante = modelo.resolver_equipo(a.local), modelo.resolver_equipo(a.visitante)
-    preds = modelo.predecir(local, visitante)
+    try:
+        local, visitante = modelo.resolver_equipo(a.local), modelo.resolver_equipo(a.visitante)
+        preds = modelo.predecir(local, visitante)
+    except KeyError:
+        if not a.anclar:
+            raise
+        # Equipo de una liga sin datos: se parte de un partido medio y el mercado pone el resto
+        local, visitante = a.local, a.visitante
+        preds = {n: m.media() for n, m in modelo.modelos.items()}
+        print(f"Aviso: sin datos de liga de {a.local} o {a.visitante}; todo sale de las cuotas de las casas")
     ev, jugadores = None, {}
     if a.anclar:
         from .ancla import lambdas_jugadores
@@ -314,6 +331,34 @@ def cmd_justas(a):
             print(f"  {jugador:<26} {NOMBRES[est]:<17} {cuotas}")
 
 
+def cmd_oportunidades(a):
+    """Recorre todos los partidos de una competición y busca casas que pagan más que el consenso."""
+    from .mercado import oportunidades
+
+    sport = a.competicion or datos.LIGAS[a.liga[0]][1]
+    eventos = odds_api.eventos(sport, a.regiones)
+    ahora = pd.Timestamp.now(tz="UTC")
+    eventos = [e for e in eventos if ahora - pd.Timedelta(hours=2) <= pd.Timestamp(e.inicio) <= ahora + pd.Timedelta(days=a.dias)]
+    print(f"{len(eventos)} partidos en {sport} en los próximos {a.dias:g} días")
+    todas = []
+    for ev in eventos:
+        if a.extra:
+            odds_api.cuotas_extra(sport, ev, a.regiones)
+        if a.jugadores:
+            odds_api.cuotas_extra(sport, ev, a.regiones, odds_api.MERCADOS_JUGADOR)
+        todas += oportunidades(ev, a.min_casas, a.casas, a.valor_min, a.cuota_max, a.jugadores)
+    todas.sort(key=lambda o: -o.valor)
+    print(f"\nCuotas por encima del consenso de las casas (valor ≥ {a.valor_min:.0%}, al menos {a.min_casas} casas):\n")
+    for o in todas[: a.top]:
+        hora = pd.Timestamp(o.evento.inicio).tz_convert("Europe/Madrid").strftime("%H:%M")
+        print(f"  {hora}  {o.evento.local} - {o.evento.visitante}")
+        print(f"      {o.seleccion.describir(o.evento.local, o.evento.visitante):<44} @ {o.cuota:<5.2f} {o.casa:<20} "
+              f"justa {o.cuota_justa:5.2f} ({o.prob_justa:5.1%}, {o.n_casas} casas)  valor {o.valor:+.1%}")
+    if not todas:
+        print("  (ninguna)")
+    print("\nOjo: comprueba la cuota en la app antes de apostar; las cuotas cambian y alguna puede estar desfasada.")
+
+
 def cmd_balance(a):
     ruta = datos.DIR_DATOS / "apuestas_reales.csv"
     if not ruta.exists():
@@ -450,6 +495,19 @@ def main(argv=None):
     s.add_argument("--solo", nargs="+", choices=list(NOMBRES), help="mostrar solo estas estadísticas")
     s.add_argument("--min-media", type=float, default=0.5, help="jugadores con al menos esta media")
     s.set_defaults(f=cmd_justas)
+
+    s = sub.add_parser("oportunidades", parents=[comun],
+                       help="todas las casas y partidos: cuotas que pagan más que el consenso del mercado")
+    s.add_argument("--competicion", choices=list(datos.COMPETICIONES.values()))
+    s.add_argument("--regiones", default="eu,uk,us")
+    s.add_argument("--dias", type=float, default=1)
+    s.add_argument("--extra", action="store_true", help="córners, tarjetas, ambos marcan... (más créditos)")
+    s.add_argument("--jugadores", action="store_true", help="remates y goleadores (más créditos; margen estimado)")
+    s.add_argument("--casas", nargs="+", help="solo estas casas, p. ej. Winamax Betfair")
+    s.add_argument("--min-casas", type=int, default=5, help="casas mínimas para fiarse del consenso")
+    s.add_argument("--valor-min", type=float, default=0.03)
+    s.add_argument("--top", type=int, default=40)
+    s.set_defaults(f=cmd_oportunidades)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")
