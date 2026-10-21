@@ -381,6 +381,56 @@ def cmd_arbitraje(a):
         print("\nOjo: las cuotas cambian en minutos y las casas limitan las cuentas que hacen arbitraje.")
 
 
+# Casas con versión española que aparecen en The Odds API (sus cuotas pueden diferir algo de las de .es)
+CASAS_ESPANA = ["Winamax", "Betfair", "Codere", "William Hill", "Betway", "888sport", "LeoVegas", "Marathon", "Bwin"]
+
+
+def cmd_barrido(a):
+    """Todas las competiciones con partidos pronto: cuotas por encima del consenso y arbitrajes."""
+    from .mercado import arbitrajes, oportunidades
+
+    casas = None if a.todas_las_casas else (a.casas or CASAS_ESPANA)
+    con_partidos = []
+    for s in odds_api.deportes(a.grupo):
+        n = len(odds_api.proximos(s["key"], a.horas))
+        if n:
+            con_partidos.append((s["key"], s["title"], n))
+    total = sum(n for *_, n in con_partidos)
+    print(f"{len(con_partidos)} competiciones con {total} partidos en las próximas {a.horas:g} h "
+          f"(coste aproximado: {len(con_partidos) * 2 * len(a.regiones.split(','))} créditos)")
+    if a.solo_listar:
+        for key, titulo, n in con_partidos:
+            print(f"  {n:3d}  {titulo}  ({key})")
+        return
+    ahora = pd.Timestamp.now(tz="UTC")
+    ops, arbs = [], []
+    for key, titulo, _ in con_partidos:
+        try:
+            evs = odds_api.eventos(key, a.regiones)
+        except Exception as e:  # una liga sin cuotas no debe parar el barrido
+            print(f"  Aviso: {titulo}: {e}")
+            continue
+        for ev in evs:
+            if not ahora <= pd.Timestamp(ev.inicio) <= ahora + pd.Timedelta(hours=a.horas):
+                continue
+            ev.competicion = titulo
+            ops += oportunidades(ev, a.min_casas, casas, a.valor_min, a.cuota_max)
+            arbs += arbitrajes(ev, casas)
+    print(f"\nCuotas por encima del consenso en {'todas las casas' if casas is None else ', '.join(casas)} "
+          f"(valor ≥ {a.valor_min:.0%}, al menos {a.min_casas} casas):\n")
+    for o in sorted(ops, key=lambda o: -o.valor)[: a.top]:
+        hora = pd.Timestamp(o.evento.inicio).tz_convert("Europe/Madrid").strftime("%a %H:%M")
+        print(f"  {o.valor:+5.1%}  {hora}  [{o.evento.competicion}] {o.evento.local} - {o.evento.visitante}")
+        print(f"          {o.seleccion.describir(o.evento.local, o.evento.visitante):<34} @ {o.cuota:<5} {o.casa:<16} "
+              f"justa {o.cuota_justa:.2f} ({o.prob_justa:.0%}, {o.n_casas} casas)")
+    if not ops:
+        print("  (ninguna)")
+    print(f"\nArbitrajes: {len(arbs)}")
+    for arb in sorted(arbs, key=lambda x: -x.beneficio)[:5]:
+        print(f"  {arb.beneficio:+.2%}  [{arb.evento.competicion}] {arb.evento.local} - {arb.evento.visitante}: "
+              + " | ".join(f"{s.lado} @{c} {casa}" for s, c, casa in arb.patas))
+
+
 def cmd_balance(a):
     ruta = datos.DIR_DATOS / "apuestas_reales.csv"
     if not ruta.exists():
@@ -540,6 +590,18 @@ def main(argv=None):
     s.add_argument("--importe", type=float, default=100, help="total a repartir")
     s.add_argument("--top", type=int, default=10)
     s.set_defaults(f=cmd_arbitraje)
+
+    s = sub.add_parser("barrido", parents=[comun], help="todas las competiciones con partidos pronto (incluidas ligas raras)")
+    s.add_argument("--grupo", default="Soccer", help="Soccer, Basketball, Tennis... ('' = todos los deportes)")
+    s.add_argument("--horas", type=float, default=36)
+    s.add_argument("--regiones", default="eu,uk")
+    s.add_argument("--casas", nargs="+", help="casas a revisar (por defecto, las que tienen versión española)")
+    s.add_argument("--todas-las-casas", action="store_true")
+    s.add_argument("--min-casas", type=int, default=8)
+    s.add_argument("--valor-min", type=float, default=0.01)
+    s.add_argument("--top", type=int, default=25)
+    s.add_argument("--solo-listar", action="store_true", help="solo dice qué competiciones hay (gratis)")
+    s.set_defaults(f=cmd_barrido)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")

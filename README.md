@@ -55,6 +55,10 @@ cp .env.example .env   # y pon tu ODDS_API_KEY
 .venv/bin/python -m apuestas oportunidades --competicion soccer_uefa_champs_league --extra \
     --casas Winamax Betfair Unibet
 
+# Barrido de todas las competiciones con partidos en 36 h (incluidas ligas poco conocidas)
+.venv/bin/python -m apuestas barrido --solo-listar      # gratis: qué ligas juegan
+.venv/bin/python -m apuestas barrido                    # cuotas por encima del consenso y arbitrajes
+
 # Cuotas justas de todos los mercados (anclado a las casas) para comparar con tu app
 .venv/bin/python -m apuestas justas "Real Madrid" "RB Leipzig" --liga SP1 D1 --anclar --jugadores \
     --competicion soccer_uefa_champs_league --regiones eu,uk,us

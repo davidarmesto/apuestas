@@ -94,6 +94,20 @@ def _get(ruta: str, params: dict, max_horas: float) -> object:
     return datos
 
 
+def deportes(grupo: str = "Soccer") -> list[dict]:
+    """Competiciones activas (gratis: no gasta créditos)."""
+    return [s for s in _get("/sports", {}, max_horas=12) if s["active"] and (not grupo or s["group"] == grupo)]
+
+
+def proximos(sport: str, horas: float = 36) -> list[dict]:
+    """Partidos de una competición en las próximas horas, sin cuotas (gratis)."""
+    import pandas as pd
+
+    ahora = pd.Timestamp.now(tz="UTC")
+    return [e for e in _get(f"/sports/{sport}/events", {}, max_horas=1)
+            if ahora <= pd.Timestamp(e["commence_time"]) <= ahora + pd.Timedelta(hours=horas)]
+
+
 def eventos(sport: str, regiones: str = "eu", max_horas: float = 3) -> list[Evento]:
     datos = _get(
         f"/sports/{sport}/odds",
