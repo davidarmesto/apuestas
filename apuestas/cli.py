@@ -414,6 +414,9 @@ def cmd_barrido(a):
             if not ahora <= pd.Timestamp(ev.inicio) <= ahora + pd.Timedelta(hours=a.horas):
                 continue
             ev.competicion = titulo
+            if key.startswith("icehockey"):
+                # En hockey unas casas cuentan la prórroga en el total de goles y otras no: no son comparables
+                ev.cuotas = [c for c in ev.cuotas if c.seleccion.tipo != "total"]
             ops += oportunidades(ev, a.min_casas, casas, a.valor_min, a.cuota_max)
             arbs += arbitrajes(ev, casas)
     print(f"\nCuotas por encima del consenso en {'todas las casas' if casas is None else ', '.join(casas)} "

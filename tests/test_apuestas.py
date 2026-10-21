@@ -265,3 +265,25 @@ def test_arbitraje_reparto_cobra_lo_mismo():
     assert a.beneficio == pytest.approx(1 / (1 / 2.2 + 1 / 4.0 + 1 / 4.5) - 1)
     cobros = [x * c for x, (_, c, _) in zip(a.repartir(100), a.patas)]
     assert max(cobros) - min(cobros) < 1e-9 and cobros[0] > 100
+
+
+def test_deporte_sin_empate():
+    from apuestas.mercado import arbitrajes, oportunidades
+    from apuestas.odds_api import Cuota, Evento
+
+    ev = Evento("x", "", "A", "B")
+    uno, dos = Seleccion("goles", "ganador", "1"), Seleccion("goles", "ganador", "2")
+    for k in range(8):
+        ev.cuotas += [Cuota(uno, 1.90, f"C{k}"), Cuota(dos, 1.90, f"C{k}")]
+    ev.cuotas += [Cuota(uno, 2.15, "Generosa"), Cuota(dos, 2.15, "Otra")]
+    assert [o.casa for o in oportunidades(ev, min_casas=5)] == ["Generosa", "Otra"]
+    assert arbitrajes(ev)[0].beneficio == pytest.approx(1 / (2 / 2.15) - 1)
+
+
+def test_ganador_sin_empate_separado_del_1x2():
+    ev = parsear_evento({"id": "x", "home_team": "A", "away_team": "B", "bookmakers": [
+        {"title": "EEUU", "markets": [{"key": "h2h", "outcomes": [{"name": "A", "price": 1.9}, {"name": "B", "price": 1.9}]}]},
+        {"title": "Europa", "markets": [{"key": "h2h", "outcomes": [
+            {"name": "A", "price": 2.4}, {"name": "Draw", "price": 4.0}, {"name": "B", "price": 2.4}]}]}]})
+    tipos = {(c.casa, c.seleccion.tipo) for c in ev.cuotas}
+    assert ("EEUU", "ganador") in tipos and ("Europa", "1x2") in tipos and ("EEUU", "1x2") not in tipos

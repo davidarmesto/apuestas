@@ -55,6 +55,11 @@ def probabilidades_justas(ev: Evento) -> dict[Seleccion, tuple[float, int]]:
         if all(t in precios for t in tres):
             for t, p in zip(tres, sin_margen([precios[t] for t in tres])):
                 recogidas[t].append(p)
+        dos = [Seleccion("goles", "ganador", x) for x in "12"]
+        if all(d in precios for d in dos):
+            # Ganador sin empate (baloncesto, tenis, hockey con prórroga...): mercado de dos
+            for d, p in zip(dos, sin_margen([precios[d] for d in dos])):
+                recogidas[d].append(p)
         for s, precio in precios.items():
             o = _opuesta(s)
             if o is not None and o in precios and _sin_nulo(s):

@@ -42,6 +42,8 @@ class Seleccion:
         est = NOMBRES.get(self.estadistica, self.estadistica)
         if self.tipo == "1x2":
             return {"1": f"Gana {local}", "X": "Empate", "2": f"Gana {visitante}"}[self.lado]
+        if self.tipo == "ganador":
+            return f"Gana {local if self.lado == '1' else visitante} (sin empate)"
         if self.tipo == "doble":
             return {"1X": f"{local} o empate", "12": f"{local} o {visitante}", "X2": f"Empate o {visitante}"}[self.lado]
         if self.tipo == "btts":
@@ -50,7 +52,8 @@ class Seleccion:
         if self.tipo == "jugador":
             return f"{self.jugador}: {NOMBRES.get(self.estadistica, self.estadistica)} {palabra.lower()} {self.linea:g}"
         if self.tipo == "total":
-            return f"{est}: {palabra} {self.linea:g}"
+            # En otros deportes la línea es de puntos, juegos...: se nota en lo grande del número
+            return f"{est if self.linea < 15 else 'Total'}: {palabra} {self.linea:g}"
         if self.tipo in ("local", "visitante"):
             equipo = local if self.tipo == "local" else visitante
             return f"{est} {equipo}: {palabra} {self.linea:g}"
@@ -101,6 +104,8 @@ def mascaras(sel: Seleccion, forma: tuple[int, int]) -> tuple[np.ndarray, np.nda
     nada = np.zeros(forma, dtype=bool)
     if sel.tipo == "1x2":
         return {"1": i > j, "X": i == j, "2": i < j}[sel.lado], nada
+    if sel.tipo == "ganador":  # sin empate posible: el empate se trata como nulo
+        return (i > j if sel.lado == "1" else i < j), i == j
     if sel.tipo == "doble":
         return {"1X": i >= j, "12": i != j, "X2": i <= j}[sel.lado], nada
     if sel.tipo == "btts":

@@ -98,7 +98,7 @@ class Arbitraje:
 def _grupos(ev: Evento) -> list[list[Seleccion]]:
     """Conjuntos de selecciones que cubren todos los resultados posibles (sin nulos)."""
     sels = {c.seleccion for c in ev.cuotas}
-    grupos = [[Seleccion("goles", "1x2", x) for x in "1X2"]]
+    grupos = [[Seleccion("goles", "1x2", x) for x in "1X2"], [Seleccion("goles", "ganador", x) for x in "12"]]
     for s in sels:
         if s.tipo == "doble" and s.lado == "1X":
             grupos.append([s, Seleccion("goles", "1x2", "2")])

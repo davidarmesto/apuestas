@@ -135,8 +135,13 @@ def parsear_evento(e: dict) -> Evento:
     ev = Evento(e["id"], e.get("commence_time", ""), e["home_team"], e["away_team"])
     for casa in e.get("bookmakers", []):
         for mercado in casa.get("markets", []):
+            # Un ganador sin empate (prórroga incluida, p. ej. en la NHL) no es el mismo mercado que el 1X2
+            salidas = mercado.get("outcomes", [])
+            sin_empate = mercado["key"] == "h2h" and len(salidas) == 2 and not any(o.get("name", "").lower() == "draw" for o in salidas)
             for o in mercado.get("outcomes", []):
                 sel = _a_seleccion(mercado["key"], o, ev.local, ev.visitante)
+                if sel is not None and sin_empate and sel.tipo == "1x2":
+                    sel = Seleccion("goles", "ganador", sel.lado)
                 if sel is not None:
                     ev.cuotas.append(Cuota(sel, float(o["price"]), casa.get("title", casa.get("key", "?"))))
     return ev
