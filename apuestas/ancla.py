@@ -22,6 +22,14 @@ from .odds_api import Evento
 from .valor import sin_margen
 
 
+# Cuánto sube cada estadística (en escala logarítmica) por cada unidad que suben los goles esperados
+# de un equipo: pendiente entre la fuerza de goles y la de remates a puerta de los equipos (≈0,6 en
+# LaLiga, Premier, Bundesliga y Serie A).
+MARGEN_MINIMO_JUGADOR = 0.05
+
+ELASTICIDAD_GOLES = {"remates_puerta": 0.6, "remates": 0.4}
+
+
 def _opuesta(s: Seleccion) -> Seleccion | None:
     if s.tipo in ("total", "local", "visitante"):
         return Seleccion(s.estadistica, s.tipo, "menos" if s.lado == "mas" else "mas", s.linea)
@@ -82,6 +90,17 @@ def anclar(preds: dict[str, Prediccion], justas: dict[Seleccion, tuple[float, in
             f"  (total {pred.local + pred.visitante:.2f} -> {nueva.local + nueva.visitante:.2f}; "
             f"{len(objetivos)} líneas, error medio {rms:.1%})"
         )
+    # Las estadísticas sin cuotas siguen a los goles: si el mercado espera más goles de un equipo,
+    # también más remates a puerta
+    if "goles" in nuevas and nuevas["goles"] is not preds["goles"]:
+        g0, g1 = preds["goles"], nuevas["goles"]
+        for est, beta in ELASTICIDAD_GOLES.items():
+            if est in preds and not any(s.estadistica == est for s in justas):
+                p = preds[est]
+                nuevas[est] = replace(p, local=p.local * (g1.local / g0.local) ** beta,
+                                      visitante=p.visitante * (g1.visitante / g0.visitante) ** beta)
+                resumen.append(f"{est:<15} modelo {p.local:.2f}-{p.visitante:.2f} -> {nuevas[est].local:.2f}-"
+                               f"{nuevas[est].visitante:.2f}  (sin cuotas: siguen a los goles del mercado)")
     return nuevas, resumen
 
 
@@ -89,7 +108,9 @@ def lambdas_jugadores(ev: Evento) -> dict[tuple[str, str], float]:
     """Media de cada estadística de jugador que reproduce las cuotas del mercado.
 
     Normalmente solo se publica el "más de", así que se ajusta a la vez la media
-    (Poisson) y el margen de la casa (acotado entre 0 % y 15 %).
+    (Poisson) y el margen de la casa. El margen no puede bajar del 5 %: en estos mercados de
+    un solo lado las casas siempre se quedan al menos eso, y sin ese suelo el ajuste podía
+    tomar como justa la probabilidad con margen.
     """
     from scipy import stats
 
@@ -108,7 +129,8 @@ def lambdas_jugadores(ev: Evento) -> dict[tuple[str, str], float]:
             return float(np.sum((np.minimum(0.995, p * (1 + margen)) - implicitas) ** 2))
 
         mejor = min(
-            (minimize(error, [l0, 0.06], method="L-BFGS-B", bounds=[(0.01, 15), (0.0, 0.15)]) for l0 in (0.5, 1.5, 3.0)),
+            (minimize(error, [l0, 0.07], method="L-BFGS-B", bounds=[(0.01, 15), (MARGEN_MINIMO_JUGADOR, 0.15)])
+             for l0 in (0.5, 1.5, 3.0)),
             key=lambda r: r.fun,
         )
         salida[clave] = float(mejor.x[0])

@@ -234,3 +234,14 @@ def test_oportunidades_frente_al_consenso():
     ops = oportunidades(ev, min_casas=5)
     assert [(o.casa, o.seleccion) for o in ops] == [("Generosa", mas)]
     assert ops[0].valor == pytest.approx(0.5 * 2.20 - 1, abs=0.01)
+
+
+def test_remates_siguen_a_los_goles_del_mercado():
+    from apuestas.ancla import anclar
+
+    preds = {"goles": Prediccion(1.5, 1.0), "remates_puerta": Prediccion(5.0, 3.5, 1.2)}
+    objetivo = {Seleccion("goles", "total", "mas", 2.5): (0.75, 10), Seleccion("goles", "1x2", "1"): (0.60, 10)}
+    nuevas, _ = anclar(preds, objetivo)
+    sube = nuevas["goles"].local / preds["goles"].local
+    assert sube > 1.2
+    assert nuevas["remates_puerta"].local / 5.0 == pytest.approx(sube ** 0.6, rel=1e-6)
