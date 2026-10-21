@@ -359,6 +359,28 @@ def cmd_oportunidades(a):
     print("\nOjo: comprueba la cuota en la app antes de apostar; las cuotas cambian y alguna puede estar desfasada.")
 
 
+def cmd_arbitraje(a):
+    """Apuestas a todos los resultados en casas distintas que ganan pase lo que pase."""
+    from .mercado import arbitrajes
+
+    sport = a.competicion or datos.LIGAS[a.liga[0]][1]
+    ahora = pd.Timestamp.now(tz="UTC")
+    eventos = [e for e in odds_api.eventos(sport, a.regiones)
+               if ahora <= pd.Timestamp(e.inicio) <= ahora + pd.Timedelta(days=a.dias)]
+    todos = []
+    for ev in eventos:
+        if a.extra:
+            odds_api.cuotas_extra(sport, ev, a.regiones)
+        todos += arbitrajes(ev, a.casas)
+    print(f"{len(eventos)} partidos, {len(todos)} arbitrajes")
+    for arb in sorted(todos, key=lambda x: -x.beneficio)[: a.top]:
+        print(f"\n  {arb.beneficio:+.2%} seguro  {arb.evento.local} - {arb.evento.visitante}")
+        for (s, c, casa), x in zip(arb.patas, arb.repartir(a.importe)):
+            print(f"      {x:7.2f} € a {s.describir(arb.evento.local, arb.evento.visitante):<35} @ {c:<5} {casa}")
+    if todos:
+        print("\nOjo: las cuotas cambian en minutos y las casas limitan las cuentas que hacen arbitraje.")
+
+
 def cmd_balance(a):
     ruta = datos.DIR_DATOS / "apuestas_reales.csv"
     if not ruta.exists():
@@ -508,6 +530,16 @@ def main(argv=None):
     s.add_argument("--valor-min", type=float, default=0.03)
     s.add_argument("--top", type=int, default=40)
     s.set_defaults(f=cmd_oportunidades)
+
+    s = sub.add_parser("arbitraje", parents=[comun], help="apuestas que ganan pase lo que pase (casas distintas)")
+    s.add_argument("--competicion", choices=list(datos.COMPETICIONES.values()))
+    s.add_argument("--regiones", default="eu,uk")
+    s.add_argument("--dias", type=float, default=3)
+    s.add_argument("--extra", action="store_true")
+    s.add_argument("--casas", nargs="+", help="solo estas casas")
+    s.add_argument("--importe", type=float, default=100, help="total a repartir")
+    s.add_argument("--top", type=int, default=10)
+    s.set_defaults(f=cmd_arbitraje)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")

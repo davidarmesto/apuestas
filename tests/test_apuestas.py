@@ -252,3 +252,16 @@ def test_sin_margen_potencia_quita_mas_a_las_sorpresas():
     pot = sin_margen([1.30, 5.0, 9.0])
     assert sum(pot) == pytest.approx(1)
     assert pot[2] < prop[2] and pot[0] > prop[0]
+
+
+def test_arbitraje_reparto_cobra_lo_mismo():
+    from apuestas.mercado import arbitrajes
+    from apuestas.odds_api import Cuota, Evento
+
+    ev = Evento("x", "", "A", "B")
+    ev.cuotas = [Cuota(Seleccion("goles", "1x2", "1"), 2.2, "C1"), Cuota(Seleccion("goles", "1x2", "X"), 4.0, "C2"),
+                 Cuota(Seleccion("goles", "1x2", "2"), 4.5, "C3"), Cuota(Seleccion("goles", "1x2", "1"), 2.0, "C2")]
+    [a] = arbitrajes(ev)
+    assert a.beneficio == pytest.approx(1 / (1 / 2.2 + 1 / 4.0 + 1 / 4.5) - 1)
+    cobros = [x * c for x, (_, c, _) in zip(a.repartir(100), a.patas)]
+    assert max(cobros) - min(cobros) < 1e-9 and cobros[0] > 100
