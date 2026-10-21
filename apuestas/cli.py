@@ -211,8 +211,9 @@ def cmd_valor(a):
                     "cuota": c.precio, "casa": c.casa, "prob": p,
                     "valor": valor_esperado(p, c.precio, nulo),
                     "stake": stake(p, c.precio, nulo, cfg),
-                    # Si el modelo discrepa mucho de todas las casas, lo normal es que se equivoque el modelo
-                    "discrepa": abs(p - consenso[c.seleccion]) > a.discrepancia,
+                    # Si el modelo discrepa mucho de todas las casas, lo normal es que se equivoque el modelo.
+                    # En líneas enteras la cuota implícita es la de ganar sin contar la devolución.
+                    "discrepa": abs(p / max(1 - nulo, 1e-9) - consenso[c.seleccion]) > a.discrepancia,
                 })
     if not recomendaciones:
         print("\nNo hay apuestas con valor según el modelo.")
@@ -283,6 +284,34 @@ def cmd_directo(a):
                 "❌ no lo aceptes: vale más dejarla correr"
             print(f"  Te ofrecen {a.cashout:.2f} € por cerrarla: {consejo}")
     print("  Ojo: no tiene en cuenta cómo va el partido (quién domina, expulsiones, cambios).")
+
+
+def cmd_justas(a):
+    """Cuotas justas de todos los mercados, para compararlas a mano con cualquier casa."""
+    from .combinadas import _p_jugador
+
+    local, visitante, preds, ev, _, jugadores = _preparar(a)
+    if ev is None:
+        print("Aviso: sin anclar al mercado; las cuotas salen solo del modelo (menos fiables)")
+    print(f"\n{local} vs {visitante}: cuotas justas (sin margen). Hay valor si la casa paga MÁS.\n")
+    est_actual = None
+    for sel, p in mercados_estandar(preds):
+        if a.solo and sel.estadistica not in a.solo or not 0.15 <= p <= 0.9:
+            continue
+        if sel.estadistica != est_actual:
+            est_actual = sel.estadistica
+            print(f"{NOMBRES[est_actual]}")
+        print(f"  {sel.describir(local, visitante):<45} {p:6.1%}   {1 / p:5.2f}")
+    if jugadores:
+        print("\nJugadores (media del partido según sus cuotas)")
+        for (jugador, est), lam in sorted(jugadores.items(), key=lambda x: -x[1]):
+            if est == "remates" or lam < a.min_media:
+                continue
+            lineas = (0.5,) if est == "goles" else (0.5, 1.5, 2.5)
+            cuotas = "   ".join(
+                f"{'marca' if est == 'goles' else f'{l + 0.5:.0f}+'} {1 / _p_jugador(lam, Seleccion(est, 'jugador', 'mas', l)):5.2f}"
+                for l in lineas)
+            print(f"  {jugador:<26} {NOMBRES[est]:<17} {cuotas}")
 
 
 def cmd_balance(a):
@@ -412,6 +441,11 @@ def main(argv=None):
     s.set_defaults(f=cmd_directo)
 
     sub.add_parser("balance", help="resultado de las apuestas reales apuntadas").set_defaults(f=cmd_balance)
+
+    s = sub.add_parser("justas", parents=[comun, anclaje], help="cuotas justas de todos los mercados para comparar con tu casa")
+    s.add_argument("--solo", nargs="+", choices=list(NOMBRES), help="mostrar solo estas estadísticas")
+    s.add_argument("--min-media", type=float, default=0.5, help="jugadores con al menos esta media")
+    s.set_defaults(f=cmd_justas)
 
     s = sub.add_parser("backtest", parents=[comun], help="simula el modelo en una temporada pasada")
     s.add_argument("--temporada", help="p. ej. 2526 (por defecto, la anterior)")
